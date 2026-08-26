@@ -1,4 +1,9 @@
-from parsers.bradesco_saude import _parse_data_br, _to_float_br, _valor_ultima_coluna
+from parsers.bradesco_saude import (
+    _normalizar_apolice,
+    _parse_data_br,
+    _to_float_br,
+    _valor_ultima_coluna,
+)
 
 
 def test_to_float_br_handles_native_numbers_from_xlsx():
@@ -35,3 +40,12 @@ def test_parse_data_br():
 
 def test_parse_data_br_sem_match():
     assert _parse_data_br("sem data aqui") == ""
+
+
+def test_normalizar_apolice_planilha_e_pdf_dao_o_mesmo_resultado():
+    assert _normalizar_apolice("001117397/000000001") == "1117397/1"
+    assert _normalizar_apolice("1117397/1") == "1117397/1"
+
+
+def test_normalizar_apolice_preserva_zero_puro():
+    assert _normalizar_apolice("000/000") == "0/0"

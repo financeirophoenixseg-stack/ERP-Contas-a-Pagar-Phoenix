@@ -10,8 +10,9 @@ from parsers import PARSERS, identificar_seguradora
 st.set_page_config(page_title="Importar Comissão", layout="wide")
 st.title("Importar demonstrativo de comissão")
 st.caption(
-    "Envie o(s) arquivo(s) do demonstrativo — a seguradora é reconhecida automaticamente "
-    "pelo layout do PDF, e a empresa responsável pelo CNPJ do corretor."
+    "Envie o(s) arquivo(s) do demonstrativo (PDF e/ou planilha — cada seguradora aceita o "
+    "que ela manda, um arquivo já basta). A seguradora e a empresa responsável são "
+    "identificadas automaticamente."
 )
 
 try:
@@ -20,10 +21,7 @@ except RuntimeError as e:
     st.error(str(e))
     st.stop()
 
-arquivos = st.file_uploader(
-    "Arquivo(s) do demonstrativo (PDF, e a planilha de detalhes se a seguradora exigir)",
-    accept_multiple_files=True,
-)
+arquivos = st.file_uploader("Arquivo(s) do demonstrativo", accept_multiple_files=True)
 if not arquivos:
     st.stop()
 
@@ -37,39 +35,23 @@ if ja_importado:
     st.warning("Este demonstrativo já foi importado anteriormente. Nenhuma ação será feita.")
     st.stop()
 
-pdfs = [a for a in arquivos if a.name.lower().endswith(".pdf")]
-if not pdfs:
-    st.error("Envie ao menos o PDF do demonstrativo.")
-    st.stop()
-
 with tempfile.TemporaryDirectory() as tmp:
-    caminho_por_nome = {}
+    caminhos = []
     for arquivo in arquivos:
         caminho = Path(tmp) / arquivo.name
         caminho.write_bytes(raw_por_nome[arquivo.name])
-        caminho_por_nome[arquivo.name] = str(caminho)
+        caminhos.append(str(caminho))
 
-    seguradora_nome = identificar_seguradora(caminho_por_nome[pdfs[0].name])
+    seguradora_nome = identificar_seguradora(caminhos)
     if not seguradora_nome:
         st.error(
-            "Não consegui identificar automaticamente a seguradora pelo layout deste PDF. "
-            "Verifique se é um demonstrativo de uma seguradora já suportada."
+            "Não consegui identificar automaticamente a seguradora pelo layout deste(s) "
+            "arquivo(s). Verifique se é um demonstrativo de uma seguradora já suportada."
         )
         st.stop()
 
-    info = PARSERS[seguradora_nome]
     st.success(f"Seguradora identificada automaticamente: **{seguradora_nome}**")
-
-    if len(arquivos) < len(info["arquivos"]):
-        st.error(
-            f"O demonstrativo da {seguradora_nome} também precisa de: "
-            f"{', '.join(info['arquivos'][1:])}. Envie junto com o PDF."
-        )
-        st.stop()
-
-    outros_nomes = [a.name for a in arquivos if a.name != pdfs[0].name]
-    caminhos = [caminho_por_nome[pdfs[0].name]] + [caminho_por_nome[n] for n in outros_nomes]
-    lote = info["parse"](caminhos)
+    lote = PARSERS[seguradora_nome]["parse"](caminhos)
 
 if not lote.linhas:
     st.error("Nenhuma linha de comissão encontrada nestes arquivos.")
@@ -83,21 +65,41 @@ st.caption(f"Corretor: {lote.corretor} — CNPJ: {lote.cnpj}")
 
 empresas = client.table("empresas").select("id, nome, cnpj").execute().data or []
 empresa_por_cnpj = {e["cnpj"]: e for e in empresas if e.get("cnpj")}
-empresa_resolvida = empresa_por_cnpj.get(lote.cnpj)
+empresa_resolvida = empresa_por_cnpj.get(lote.cnpj) if lote.cnpj else None
+identificado_por = "CNPJ"
+
+if not empresa_resolvida and lote.conta:
+    # sem CNPJ (ex.: só a planilha foi enviada) — tenta pela conta bancária,
+    # ignorando a agência (o número de agência vem formatado diferente entre
+    # o extrato da seguradora e o nosso cadastro).
+    contas = (
+        client.table("contas_bancarias")
+        .select("banco, conta, empresas(id, nome)")
+        .eq("conta", lote.conta)
+        .execute()
+        .data
+        or []
+    )
+    if len(contas) == 1:
+        empresa_resolvida = contas[0]["empresas"]
+        identificado_por = "conta bancária"
 
 if empresa_resolvida:
-    st.success(f"Empresa identificada automaticamente pelo CNPJ: **{empresa_resolvida['nome']}**")
+    st.success(f"Empresa identificada automaticamente pelo {identificado_por}: **{empresa_resolvida['nome']}**")
     empresa_id = empresa_resolvida["id"]
 else:
+    motivo = f"CNPJ '{lote.cnpj}'" if lote.cnpj else f"conta '{lote.conta}'" if lote.conta else "nenhum dado"
     st.warning(
-        f"CNPJ '{lote.cnpj}' não está vinculado a nenhuma empresa cadastrada. Selecione manualmente:"
+        f"{motivo} não está vinculado a nenhuma empresa cadastrada. Selecione manualmente:"
     )
     if not empresas:
         st.error("Cadastre ao menos uma empresa em **Empresas** antes de importar.")
         st.stop()
     nomes_por_id = {e["id"]: e["nome"] for e in empresas}
     empresa_id = st.selectbox("Empresa responsável", options=list(nomes_por_id.keys()), format_func=lambda i: nomes_por_id[i])
-    if st.checkbox(f"Salvar CNPJ {lote.cnpj} para esta empresa (próximas importações serão automáticas)"):
+    if lote.cnpj and st.checkbox(
+        f"Salvar CNPJ {lote.cnpj} para esta empresa (próximas importações serão automáticas)"
+    ):
         try:
             client.table("empresas").update({"cnpj": lote.cnpj}).eq("id", empresa_id).execute()
             st.info("CNPJ salvo.")

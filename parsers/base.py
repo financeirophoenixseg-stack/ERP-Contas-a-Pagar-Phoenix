@@ -41,3 +41,9 @@ class LoteComissao:
     pis_cofins_csll: float
     valor_liquido: float
     linhas: list[LinhaComissao] = field(default_factory=list)
+    # Opcionais: preenchidos por seguradoras cujo arquivo traz banco/agência/
+    # conta (ex.: Bradesco), usados como identificação alternativa da empresa
+    # quando o CNPJ não está disponível (ex.: quando só a planilha foi enviada).
+    banco: str = ""
+    agencia: str = ""
+    conta: str = ""
