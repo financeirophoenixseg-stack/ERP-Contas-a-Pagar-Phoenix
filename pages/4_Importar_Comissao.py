@@ -7,6 +7,7 @@ from pathlib import Path
 import streamlit as st
 
 from classificacao_comissao import classificar, parcelas_restantes
+from regra_suhai import bate_com_formula, parcelas_enquadradas
 from db import get_client
 from lancamentos import gerar_recorrencia, somar_meses
 from parsers import PARSERS, identificar_seguradora
@@ -399,6 +400,18 @@ if st.button("Confirmar importação", type="primary"):
             if regra_parcelamento and linha.tipo == "pagamento":
                 provisionar_parcelamento(
                     cliente_id, linha.apolice, linha.valor_comissao, linha.parcela, regra_parcelamento
+                )
+            elif (
+                seguradora_nome == "Suhai"
+                and linha.tipo == "pagamento"
+                and bate_com_formula(linha.valor_comissao, linha.valor_parcela, linha.percentual_comissao)
+            ):
+                # Regra da Suhai (planilha "Novo Suhai", 73%): dá pra prever
+                # quantas parcelas futuras recebem comissão só pelo percentual,
+                # sem precisar cadastrar nada por apólice.
+                regra_suhai = {"total_parcelas": parcelas_enquadradas(linha.percentual_comissao)}
+                provisionar_parcelamento(
+                    cliente_id, linha.apolice, linha.valor_comissao, linha.parcela, regra_suhai
                 )
     except Exception as e:
         # desfaz o lote parcial para permitir nova tentativa (o hash_arquivo
