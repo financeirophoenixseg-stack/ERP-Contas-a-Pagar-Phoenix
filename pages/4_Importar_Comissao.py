@@ -38,7 +38,10 @@ if ja_importado:
 with tempfile.TemporaryDirectory() as tmp:
     caminhos = []
     for arquivo in arquivos:
-        caminho = Path(tmp) / arquivo.name
+        # nome do upload não é confiável (pode trazer ".." ou um caminho
+        # absoluto) — usa só o nome do arquivo em si, sem componentes de diretório.
+        nome_seguro = Path(arquivo.name).name
+        caminho = Path(tmp) / nome_seguro
         caminho.write_bytes(raw_por_nome[arquivo.name])
         caminhos.append(str(caminho))
 

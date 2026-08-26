@@ -1,6 +1,7 @@
 import hashlib
 
 import streamlit as st
+from postgrest.exceptions import APIError
 
 from db import get_client
 from ofx_parser import decode_ofx_bytes, parse_ofx
@@ -176,8 +177,11 @@ if st.button("Confirmar importação", type="primary"):
                     ).eq("id", match_previsto["id"]).execute()
                     client.table("ofx_transacoes").update({"conciliado": True}).eq("id", txn_id).execute()
                     conciliadas += 1
-        except Exception:
-            duplicadas += 1  # violação do unique (conta_bancaria_id, fit_id)
+        except APIError as e:
+            if e.code == "23505":  # unique_violation: (conta_bancaria_id, fit_id) já existe
+                duplicadas += 1
+            else:
+                raise
 
     msg = f"Importação concluída: {inseridas} novas movimentações, {duplicadas} já existiam."
     if conciliadas:
