@@ -14,13 +14,18 @@ except RuntimeError as e:
 
 with st.form("nova_empresa", clear_on_submit=True):
     nome = st.text_input("Nome da empresa")
+    cnpj = st.text_input(
+        "CNPJ (opcional)", help="Usado para identificar automaticamente a empresa em demonstrativos de comissão."
+    )
     submitted = st.form_submit_button("Cadastrar")
     if submitted:
         if not nome.strip():
             st.warning("Informe um nome.")
         else:
             try:
-                client.table("empresas").insert({"nome": nome.strip()}).execute()
+                client.table("empresas").insert(
+                    {"nome": nome.strip(), "cnpj": cnpj.strip() or None}
+                ).execute()
                 st.success(f"Empresa '{nome}' cadastrada.")
             except Exception as e:
                 st.error(f"Erro ao cadastrar: {e}")

@@ -1,0 +1,208 @@
+import hashlib
+import tempfile
+from pathlib import Path
+
+import streamlit as st
+
+from db import get_client
+from suhai_parser import parse_suhai_pdf
+
+st.set_page_config(page_title="Importar Suhai", layout="wide")
+st.title("Importar demonstrativo de comissão — Suhai")
+st.caption(
+    "A empresa responsável é identificada pelo CNPJ do corretor no demonstrativo."
+)
+
+try:
+    client = get_client()
+except RuntimeError as e:
+    st.error(str(e))
+    st.stop()
+
+arquivo = st.file_uploader("Selecione o PDF do demonstrativo Suhai", type=["pdf"])
+if not arquivo:
+    st.stop()
+
+raw = arquivo.getvalue()
+hash_arquivo = hashlib.sha256(raw).hexdigest()
+
+ja_importado = (
+    client.table("lotes_comissao").select("id").eq("hash_arquivo", hash_arquivo).execute().data
+)
+if ja_importado:
+    st.warning("Este demonstrativo já foi importado anteriormente. Nenhuma ação será feita.")
+    st.stop()
+
+with tempfile.TemporaryDirectory() as tmp:
+    caminho = Path(tmp) / arquivo.name
+    caminho.write_bytes(raw)
+    lote = parse_suhai_pdf(str(caminho))
+
+if not lote.linhas:
+    st.error("Nenhuma linha de comissão encontrada neste PDF.")
+    st.stop()
+
+col1, col2, col3 = st.columns(3)
+col1.metric("Data de pagamento", lote.data_pagamento or "?")
+col2.metric("Valor bruto (tributário)", f"R$ {lote.valor_bruto:,.2f}")
+col3.metric("Valor líquido", f"R$ {lote.valor_liquido:,.2f}")
+st.caption(f"Corretor: {lote.corretor} — CNPJ: {lote.cnpj}")
+
+empresas = client.table("empresas").select("id, nome, cnpj").execute().data or []
+empresa_por_cnpj = {e["cnpj"]: e for e in empresas if e.get("cnpj")}
+empresa_resolvida = empresa_por_cnpj.get(lote.cnpj)
+
+if empresa_resolvida:
+    st.success(f"Empresa identificada automaticamente pelo CNPJ: **{empresa_resolvida['nome']}**")
+    empresa_id = empresa_resolvida["id"]
+else:
+    st.warning(
+        f"CNPJ '{lote.cnpj}' não está vinculado a nenhuma empresa cadastrada. Selecione manualmente:"
+    )
+    if not empresas:
+        st.error("Cadastre ao menos uma empresa em **Empresas** antes de importar.")
+        st.stop()
+    nomes_por_id = {e["id"]: e["nome"] for e in empresas}
+    empresa_id = st.selectbox("Empresa responsável", options=list(nomes_por_id.keys()), format_func=lambda i: nomes_por_id[i])
+    if st.checkbox(f"Salvar CNPJ {lote.cnpj} para esta empresa (próximas importações serão automáticas)"):
+        try:
+            client.table("empresas").update({"cnpj": lote.cnpj}).eq("id", empresa_id).execute()
+            st.info("CNPJ salvo.")
+        except Exception as e:
+            st.error(f"Erro ao salvar CNPJ: {e}")
+
+st.divider()
+st.subheader(f"{len(lote.linhas)} movimentações de comissão")
+st.dataframe(
+    [
+        {
+            "Cliente": l.cliente,
+            "Apólice": l.apolice,
+            "Endosso": l.endosso,
+            "Parcela": l.parcela,
+            "% Comissão": l.percentual_comissao,
+            "Tipo": l.tipo,
+            "Valor Parcela": l.valor_parcela,
+            "Valor Comissão": l.valor_comissao,
+        }
+        for l in lote.linhas
+    ],
+    use_container_width=True,
+    hide_index=True,
+)
+
+if st.button("Confirmar importação", type="primary"):
+    seguradora = client.table("seguradoras").select("id").eq("nome", "Suhai").execute().data
+    seguradora_id = (
+        seguradora[0]["id"]
+        if seguradora
+        else client.table("seguradoras").insert({"nome": "Suhai"}).execute().data[0]["id"]
+    )
+
+    # Motor de conciliação: procura crédito no OFX com mesma data/valor.
+    # Se achar em conta de OUTRA empresa, gera alerta de auditoria em vez de aceitar.
+    candidatos = (
+        client.table("ofx_transacoes")
+        .select("id, valor, data, conciliado, contas_bancarias(empresa_id)")
+        .eq("data", lote.data_pagamento)
+        .eq("conciliado", False)
+        .execute()
+        .data
+        or []
+    )
+    match_mesma_empresa = [
+        c for c in candidatos
+        if abs(c["valor"] - lote.valor_liquido) < 0.005 and c["contas_bancarias"]["empresa_id"] == empresa_id
+    ]
+    match_outra_empresa = [
+        c for c in candidatos
+        if abs(c["valor"] - lote.valor_liquido) < 0.005 and c["contas_bancarias"]["empresa_id"] != empresa_id
+    ]
+
+    if match_mesma_empresa:
+        ofx_transacao_id = match_mesma_empresa[0]["id"]
+        status = "conciliado"
+        client.table("ofx_transacoes").update({"conciliado": True}).eq("id", ofx_transacao_id).execute()
+    else:
+        ofx_transacao_id = None
+        status = "divergente" if match_outra_empresa else "pendente"
+
+    lote_resp = (
+        client.table("lotes_comissao")
+        .insert(
+            {
+                "seguradora_id": seguradora_id,
+                "empresa_id": empresa_id,
+                "arquivo_origem": arquivo.name,
+                "hash_arquivo": hash_arquivo,
+                "data_pagamento": lote.data_pagamento,
+                "valor_bruto": lote.valor_bruto,
+                "valor_irrf": lote.irrf,
+                "valor_iss": lote.iss,
+                "valor_inss": lote.inss,
+                "valor_pis_cofins_csll": lote.pis_cofins_csll,
+                "valor_liquido": lote.valor_liquido,
+                "ofx_transacao_id": ofx_transacao_id,
+                "status": status,
+            }
+        )
+        .execute()
+    )
+    lote_id = lote_resp.data[0]["id"]
+
+    if match_outra_empresa:
+        client.table("auditoria_alertas").insert(
+            {
+                "tipo": "empresa_divergente",
+                "descricao": (
+                    f"Comissão da empresa '{empresa_id}' (lote {lote.data_pagamento}, "
+                    f"R$ {lote.valor_liquido:.2f}) encontrada em conta bancária de outra empresa."
+                ),
+                "lote_id": lote_id,
+            }
+        ).execute()
+
+    clientes_existentes = {
+        c["nome"].strip().lower(): c["id"]
+        for c in client.table("clientes").select("id, nome").execute().data or []
+    }
+
+    inseridas = 0
+    for linha in lote.linhas:
+        chave = linha.cliente.strip().lower()
+        cliente_id = clientes_existentes.get(chave)
+        if not cliente_id:
+            novo = (
+                client.table("clientes")
+                .insert({"nome": linha.cliente, "empresa_principal_id": empresa_id})
+                .execute()
+            )
+            cliente_id = novo.data[0]["id"]
+            clientes_existentes[chave] = cliente_id
+
+        client.table("movimentacoes_comissao").insert(
+            {
+                "lote_id": lote_id,
+                "cliente_id": cliente_id,
+                "tipo": linha.tipo,
+                "apolice": linha.apolice,
+                "parcela": linha.parcela,
+                "percentual_comissao": linha.percentual_comissao,
+                "valor_parcela": linha.valor_parcela,
+                "valor_comissao": linha.valor_comissao,
+            }
+        ).execute()
+        inseridas += 1
+
+    if status == "conciliado":
+        st.success(f"Lote conciliado automaticamente! {inseridas} movimentações registradas.")
+    elif status == "divergente":
+        st.error(
+            f"⚠️ {inseridas} movimentações registradas, mas o crédito bancário correspondente "
+            "foi encontrado em conta de OUTRA empresa. Alerta de auditoria criado — revise antes de aceitar."
+        )
+    else:
+        st.warning(
+            f"{inseridas} movimentações registradas. Nenhum crédito bancário correspondente foi "
+            "encontrado ainda — importe o OFX do período para tentar conciliar."
+        )
