@@ -1,4 +1,4 @@
-from classificacao_comissao import classificar
+from classificacao_comissao import classificar, parcelas_restantes
 
 REGRA = {"parcelas_agenciamento": 3}
 
@@ -23,3 +23,19 @@ def test_classificar_parcela_nao_numerica_nao_classifica():
 
 def test_classificar_zero_parcelas_agenciamento_tudo_vitalicio():
     assert classificar("1", {"parcelas_agenciamento": 0}) == "vitalicio"
+
+
+def test_parcelas_restantes_no_meio():
+    assert parcelas_restantes("2", 10) == 8
+
+
+def test_parcelas_restantes_ultima():
+    assert parcelas_restantes("10", 10) == 0
+
+
+def test_parcelas_restantes_alem_do_total_nao_fica_negativo():
+    assert parcelas_restantes("12", 10) == 0
+
+
+def test_parcelas_restantes_nao_numerica():
+    assert parcelas_restantes("N/A", 10) == 0

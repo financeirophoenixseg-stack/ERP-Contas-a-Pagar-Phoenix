@@ -134,6 +134,19 @@ create table movimentacoes_comissao (
 -- apólice estiver ativa). Percentuais são só para referência/conferência
 -- (a classificação de fato usa o nº da parcela, mais confiável que
 -- comparar percentual, que varia por contrato).
+-- Regra de parcelamento por apólice (auto/RE): número total de parcelas
+-- esperadas. Ao chegar uma comissão da parcela P, se P < total, provisiona
+-- as parcelas restantes (P+1 até total) como receita futura, usando o
+-- valor observado como estimativa. Diferente da vitalícia: aqui a
+-- provisão TERMINA quando total_parcelas é atingido.
+create table regras_parcelamento (
+    id uuid primary key default gen_random_uuid(),
+    apolice text not null unique,
+    cliente_id uuid references clientes(id),
+    total_parcelas int not null,
+    created_at timestamptz not null default now()
+);
+
 create table regras_classificacao_comissao (
     id uuid primary key default gen_random_uuid(),
     cliente_id uuid not null unique references clientes(id),
@@ -208,3 +221,4 @@ alter table auditoria_alertas disable row level security;
 alter table regras_identificacao disable row level security;
 alter table lancamentos_previstos disable row level security;
 alter table regras_classificacao_comissao disable row level security;
+alter table regras_parcelamento disable row level security;

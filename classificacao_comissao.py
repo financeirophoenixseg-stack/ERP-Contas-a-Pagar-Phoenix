@@ -17,3 +17,14 @@ def classificar(parcela: str, regra: dict | None) -> str | None:
         return None
     limite = regra.get("parcelas_agenciamento", 0) or 0
     return "agenciamento" if numero_parcela <= limite else "vitalicio"
+
+
+def parcelas_restantes(parcela_atual: str, total_parcelas: int) -> int:
+    """Para auto/RE: quantas parcelas ainda faltam depois da parcela_atual,
+    dado o total conhecido da apólice (regras_parcelamento). 0 (ou negativo,
+    tratado como 0) significa que essa já foi a última."""
+    try:
+        numero_parcela = int(str(parcela_atual).strip())
+    except (TypeError, ValueError):
+        return 0
+    return max(0, total_parcelas - numero_parcela)

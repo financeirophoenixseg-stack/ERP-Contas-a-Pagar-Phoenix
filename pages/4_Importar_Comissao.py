@@ -6,7 +6,7 @@ from pathlib import Path
 
 import streamlit as st
 
-from classificacao_comissao import classificar
+from classificacao_comissao import classificar, parcelas_restantes
 from db import get_client
 from lancamentos import gerar_recorrencia, somar_meses
 from parsers import PARSERS, identificar_seguradora
@@ -298,11 +298,12 @@ if st.button("Confirmar importação", type="primary"):
             return cliente_id
         return escolha  # mapeamento já existia no banco antes desta importação
 
-    def provisionar_vitalicio(cliente_id: str, apolice: str, valor: float, regra: dict) -> None:
-        """Comissão vitalícia = vai se repetir todo mês enquanto a apólice
-        durar. Se já existem provisões futuras (pendentes) dessa apólice,
-        só atualiza o valor pelo mais recente observado; senão, cria as
-        próximas `meses_provisionar` ocorrências."""
+    def _provisionar_ocorrencias(cliente_id: str, apolice: str, valor: float, quantidade: int, descricao: str) -> None:
+        """Se já existem provisões futuras (pendentes) dessa apólice, só
+        atualiza o valor pelo mais recente observado (sem duplicar);
+        senão, cria `quantidade` ocorrências mensais futuras."""
+        if quantidade <= 0:
+            return
         existentes = (
             client.table("lancamentos_previstos")
             .select("id")
@@ -322,12 +323,12 @@ if st.button("Confirmar importação", type="primary"):
 
         data_base = date.fromisoformat(lote.data_pagamento) if lote.data_pagamento else date.today()
         grupo_id = str(uuid.uuid4())
-        for ocorrencia in gerar_recorrencia(valor, somar_meses(data_base, 1), regra["meses_provisionar"]):
+        for ocorrencia in gerar_recorrencia(valor, somar_meses(data_base, 1), quantidade):
             client.table("lancamentos_previstos").insert(
                 {
                     "empresa_id": empresa_id,
                     "tipo": "receber",
-                    "descricao": f"Comissão vitalícia prevista — apólice {apolice}",
+                    "descricao": descricao,
                     "valor": ocorrencia.valor,
                     "data_vencimento": ocorrencia.data_vencimento.isoformat(),
                     "status": "previsto",
@@ -338,6 +339,21 @@ if st.button("Confirmar importação", type="primary"):
                 }
             ).execute()
 
+    def provisionar_vitalicio(cliente_id: str, apolice: str, valor: float, regra: dict) -> None:
+        """Comissão vitalícia = vai se repetir todo mês enquanto a apólice durar."""
+        _provisionar_ocorrencias(
+            cliente_id, apolice, valor, regra["meses_provisionar"],
+            f"Comissão vitalícia prevista — apólice {apolice}",
+        )
+
+    def provisionar_parcelamento(cliente_id: str, apolice: str, valor: float, parcela: str, regra: dict) -> None:
+        """Auto/RE: nº de parcelas restantes conhecido (regras_parcelamento)."""
+        restantes = parcelas_restantes(parcela, regra["total_parcelas"])
+        _provisionar_ocorrencias(
+            cliente_id, apolice, valor, restantes,
+            f"Comissão parcelada prevista — apólice {apolice}",
+        )
+
     try:
         clientes_existentes = {
             c["nome"].strip().lower(): c["id"]
@@ -346,6 +362,10 @@ if st.button("Confirmar importação", type="primary"):
         regras_por_cliente = {
             r["cliente_id"]: r
             for r in client.table("regras_classificacao_comissao").select("*").execute().data or []
+        }
+        regras_parcelamento_por_apolice = {
+            r["apolice"]: r
+            for r in client.table("regras_parcelamento").select("*").execute().data or []
         }
         inseridas = 0
         for linha in lote.linhas:
@@ -374,6 +394,12 @@ if st.button("Confirmar importação", type="primary"):
 
             if categoria == "vitalicio" and linha.apolice:
                 provisionar_vitalicio(cliente_id, linha.apolice, linha.valor_comissao, regra)
+
+            regra_parcelamento = regras_parcelamento_por_apolice.get(linha.apolice)
+            if regra_parcelamento and linha.tipo == "pagamento":
+                provisionar_parcelamento(
+                    cliente_id, linha.apolice, linha.valor_comissao, linha.parcela, regra_parcelamento
+                )
     except Exception as e:
         # desfaz o lote parcial para permitir nova tentativa (o hash_arquivo
         # senão ficaria "já importado" com dados incompletos, travado).

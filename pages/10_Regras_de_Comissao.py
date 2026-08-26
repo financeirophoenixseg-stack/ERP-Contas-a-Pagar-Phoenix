@@ -3,12 +3,7 @@ import streamlit as st
 from db import get_client
 
 st.set_page_config(page_title="Regras de Comissão", layout="wide")
-st.title("Regras de Comissão Vitalícia")
-st.caption(
-    "Define, por cliente, quantas das primeiras parcelas são agenciamento (comissão de "
-    "entrada, % alto) — da parcela seguinte em diante, o sistema classifica como vitalícia "
-    "(recorrente) e já provisiona receita futura esperada em Contas a Pagar e Receber."
-)
+st.title("Regras de Comissão")
 
 try:
     client = get_client()
@@ -25,6 +20,12 @@ nomes_por_id = {c["id"]: c["nome"] for c in clientes}
 regras = client.table("regras_classificacao_comissao").select("*").execute().data or []
 regra_por_cliente = {r["cliente_id"]: r for r in regras}
 
+st.header("Vitalício (Saúde/Vida)")
+st.caption(
+    "Define, por cliente, quantas das primeiras parcelas são agenciamento (comissão de "
+    "entrada, % alto) — da parcela seguinte em diante, o sistema classifica como vitalícia "
+    "(recorrente) e já provisiona receita futura esperada em Contas a Pagar e Receber."
+)
 st.subheader("Cadastrar / atualizar regra")
 cliente_id = st.selectbox("Cliente", options=list(nomes_por_id.keys()), format_func=lambda i: nomes_por_id[i])
 existente = regra_por_cliente.get(cliente_id)
@@ -85,3 +86,55 @@ if regras:
     )
 else:
     st.info("Nenhuma regra cadastrada ainda.")
+
+st.divider()
+st.header("Parcelamento (Auto/RE)")
+st.caption(
+    "Define, por apólice, o número total de parcelas esperadas. Ao chegar uma comissão de "
+    "uma parcela, se ainda faltam parcelas, o sistema provisiona as restantes como receita "
+    "futura (mesmo valor da última observada), atualizando sozinho quando a próxima chegar de verdade."
+)
+
+regras_parc = client.table("regras_parcelamento").select("*, clientes(nome)").execute().data or []
+
+st.subheader("Cadastrar / atualizar regra")
+col1, col2, col3 = st.columns(3)
+apolice_parc = col1.text_input("Número da apólice")
+cliente_parc_id = col2.selectbox(
+    "Cliente (opcional, só referência)",
+    options=["(nenhum)"] + list(nomes_por_id.keys()),
+    format_func=lambda i: "(nenhum)" if i == "(nenhum)" else nomes_por_id[i],
+)
+total_parcelas = col3.number_input("Total de parcelas da apólice", min_value=1, step=1, value=12)
+
+if st.button("Salvar regra de parcelamento", type="primary", disabled=not apolice_parc.strip()):
+    dados = {
+        "apolice": apolice_parc.strip(),
+        "cliente_id": None if cliente_parc_id == "(nenhum)" else cliente_parc_id,
+        "total_parcelas": int(total_parcelas),
+    }
+    existente_parc = next((r for r in regras_parc if r["apolice"] == apolice_parc.strip()), None)
+    if existente_parc:
+        client.table("regras_parcelamento").update(dados).eq("id", existente_parc["id"]).execute()
+    else:
+        client.table("regras_parcelamento").insert(dados).execute()
+    st.success("Regra de parcelamento salva.")
+    st.rerun()
+
+st.divider()
+st.subheader("Regras de parcelamento cadastradas")
+if regras_parc:
+    st.dataframe(
+        [
+            {
+                "Apólice": r["apolice"],
+                "Cliente": (r.get("clientes") or {}).get("nome", "-"),
+                "Total de parcelas": r["total_parcelas"],
+            }
+            for r in regras_parc
+        ],
+        use_container_width=True,
+        hide_index=True,
+    )
+else:
+    st.info("Nenhuma regra de parcelamento cadastrada ainda.")
