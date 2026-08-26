@@ -161,7 +161,10 @@ if apolices_sem_nome:
                 novo_nome = st.text_input("Nome do cliente", key=f"novo_cliente_apolice_{apolice}")
                 mapa_apolice_cliente[apolice] = ("novo", novo_nome)
             else:
-                mapa_apolice_cliente[apolice] = escolha
+                # cliente já existe, mas o mapeamento apolice->cliente ainda não
+                # foi salvo — precisa ser gravado ao confirmar, por isso o "existente"
+                # (distinto de uma apólice cujo mapeamento já veio do banco).
+                mapa_apolice_cliente[apolice] = ("existente", escolha)
 
 faltando_resolver = [
     a for a in apolices_sem_nome
@@ -243,12 +246,7 @@ if st.button("Confirmar importação", type="primary"):
             }
         ).execute()
 
-    clientes_existentes = {
-        c["nome"].strip().lower(): c["id"]
-        for c in client.table("clientes").select("id, nome").execute().data or []
-    }
-
-    def resolver_cliente_por_nome(nome: str) -> str:
+    def resolver_cliente_por_nome(nome: str, clientes_existentes: dict) -> str:
         chave = nome.strip().lower()
         cliente_id = clientes_existentes.get(chave)
         if not cliente_id:
@@ -261,36 +259,54 @@ if st.button("Confirmar importação", type="primary"):
             clientes_existentes[chave] = cliente_id
         return cliente_id
 
-    def resolver_cliente_por_apolice(apolice: str) -> str:
+    def resolver_cliente_por_apolice(apolice: str, clientes_existentes: dict) -> str:
         escolha = mapa_apolice_cliente[apolice]
-        if isinstance(escolha, tuple):  # ("novo", nome)
-            cliente_id = resolver_cliente_por_nome(escolha[1])
+        if isinstance(escolha, tuple):
+            tipo_escolha, valor = escolha
+            cliente_id = (
+                resolver_cliente_por_nome(valor, clientes_existentes) if tipo_escolha == "novo" else valor
+            )
             client.table("apolice_clientes").insert(
                 {"apolice": apolice, "cliente_id": cliente_id}
             ).execute()
             return cliente_id
-        return escolha  # já é o cliente_id existente (do banco ou selecionado agora)
+        return escolha  # mapeamento já existia no banco antes desta importação
 
-    inseridas = 0
-    for linha in lote.linhas:
-        if linha.cliente:
-            cliente_id = resolver_cliente_por_nome(linha.cliente)
-        else:
-            cliente_id = resolver_cliente_por_apolice(linha.apolice)
+    try:
+        clientes_existentes = {
+            c["nome"].strip().lower(): c["id"]
+            for c in client.table("clientes").select("id, nome").execute().data or []
+        }
+        inseridas = 0
+        for linha in lote.linhas:
+            if linha.cliente:
+                cliente_id = resolver_cliente_por_nome(linha.cliente, clientes_existentes)
+            else:
+                cliente_id = resolver_cliente_por_apolice(linha.apolice, clientes_existentes)
 
-        client.table("movimentacoes_comissao").insert(
-            {
-                "lote_id": lote_id,
-                "cliente_id": cliente_id,
-                "tipo": linha.tipo,
-                "apolice": linha.apolice,
-                "parcela": linha.parcela,
-                "percentual_comissao": linha.percentual_comissao,
-                "valor_parcela": linha.valor_parcela,
-                "valor_comissao": linha.valor_comissao,
-            }
-        ).execute()
-        inseridas += 1
+            client.table("movimentacoes_comissao").insert(
+                {
+                    "lote_id": lote_id,
+                    "cliente_id": cliente_id,
+                    "tipo": linha.tipo,
+                    "apolice": linha.apolice,
+                    "parcela": linha.parcela,
+                    "percentual_comissao": linha.percentual_comissao,
+                    "valor_parcela": linha.valor_parcela,
+                    "valor_comissao": linha.valor_comissao,
+                }
+            ).execute()
+            inseridas += 1
+    except Exception as e:
+        # desfaz o lote parcial para permitir nova tentativa (o hash_arquivo
+        # senão ficaria "já importado" com dados incompletos, travado).
+        client.table("movimentacoes_comissao").delete().eq("lote_id", lote_id).execute()
+        client.table("auditoria_alertas").delete().eq("lote_id", lote_id).execute()
+        if ofx_transacao_id:
+            client.table("ofx_transacoes").update({"conciliado": False}).eq("id", ofx_transacao_id).execute()
+        client.table("lotes_comissao").delete().eq("id", lote_id).execute()
+        st.error(f"Erro ao importar (revertido, pode tentar de novo): {e}")
+        st.stop()
 
     if status == "conciliado":
         st.success(f"Lote conciliado automaticamente! {inseridas} movimentações registradas.")
