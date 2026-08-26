@@ -1,4 +1,4 @@
-from suhai_parser import (
+from parsers.suhai import (
     _classify_tipo,
     _limpar_nome_cliente,
     _parse_apolice_endosso,

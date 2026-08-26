@@ -11,9 +11,10 @@ e tratadas aqui:
 """
 
 import re
-from dataclasses import dataclass, field
 
 import pdfplumber
+
+from parsers.base import LinhaComissao, LoteComissao
 
 TABLE_SETTINGS = {
     "vertical_strategy": "lines",
@@ -62,39 +63,12 @@ def _parse_apolice_endosso(raw: str) -> tuple[str, str]:
     return squeezed, ""
 
 
-@dataclass
-class SuhaiLinha:
-    cliente: str
-    apolice: str
-    endosso: str
-    parcela: str
-    percentual_comissao: float
-    tipo_raw: str
-    tipo: str
-    valor_parcela: float
-    valor_comissao: float
-
-
-@dataclass
-class SuhaiLote:
-    corretor: str
-    cnpj: str
-    data_pagamento: str  # YYYY-MM-DD
-    valor_bruto: float
-    irrf: float
-    iss: float
-    inss: float
-    pis_cofins_csll: float
-    valor_liquido: float
-    linhas: list[SuhaiLinha] = field(default_factory=list)
-
-
 def _parse_data_br(data: str) -> str:
     match = re.match(r"(\d{2})/(\d{2})/(\d{4})", data)
     return f"{match.group(3)}-{match.group(2)}-{match.group(1)}" if match else ""
 
 
-def parse_suhai_pdf(caminho: str) -> SuhaiLote:
+def parse(caminho: str) -> LoteComissao:
     with pdfplumber.open(caminho) as pdf:
         texto_completo = "\n".join(p.extract_text() or "" for p in pdf.pages)
         linhas_tabela: list[list[str]] = []
@@ -109,7 +83,7 @@ def parse_suhai_pdf(caminho: str) -> SuhaiLote:
         m = re.search(padrao, texto_completo)
         return _to_float(m.group(1)) if m else 0.0
 
-    lote = SuhaiLote(
+    lote = LoteComissao(
         corretor=corretor_match.group(1).strip() if corretor_match else "",
         cnpj=cnpj_match.group(1).strip() if cnpj_match else "",
         data_pagamento=_parse_data_br(corretor_match.group(2)) if corretor_match else "",
@@ -132,7 +106,7 @@ def parse_suhai_pdf(caminho: str) -> SuhaiLote:
         apolice, endosso = _parse_apolice_endosso(row[1])
         tipo_raw = (row[4] or "").strip()
         lote.linhas.append(
-            SuhaiLinha(
+            LinhaComissao(
                 cliente=cliente,
                 apolice=apolice,
                 endosso=endosso,

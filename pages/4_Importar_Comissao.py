@@ -5,12 +5,13 @@ from pathlib import Path
 import streamlit as st
 
 from db import get_client
-from suhai_parser import parse_suhai_pdf
+from parsers import PARSERS
 
-st.set_page_config(page_title="Importar Suhai", layout="wide")
-st.title("Importar demonstrativo de comissão — Suhai")
+st.set_page_config(page_title="Importar Comissão", layout="wide")
+st.title("Importar demonstrativo de comissão")
 st.caption(
-    "A empresa responsável é identificada pelo CNPJ do corretor no demonstrativo."
+    "A empresa responsável é identificada pelo CNPJ do corretor no demonstrativo. "
+    "Cada seguradora tem seu próprio layout de PDF — escolha qual abaixo."
 )
 
 try:
@@ -19,7 +20,10 @@ except RuntimeError as e:
     st.error(str(e))
     st.stop()
 
-arquivo = st.file_uploader("Selecione o PDF do demonstrativo Suhai", type=["pdf"])
+seguradora_nome = st.selectbox("Seguradora", options=list(PARSERS.keys()))
+parse = PARSERS[seguradora_nome]
+
+arquivo = st.file_uploader(f"Selecione o PDF do demonstrativo ({seguradora_nome})", type=["pdf"])
 if not arquivo:
     st.stop()
 
@@ -36,7 +40,7 @@ if ja_importado:
 with tempfile.TemporaryDirectory() as tmp:
     caminho = Path(tmp) / arquivo.name
     caminho.write_bytes(raw)
-    lote = parse_suhai_pdf(str(caminho))
+    lote = parse(str(caminho))
 
 if not lote.linhas:
     st.error("Nenhuma linha de comissão encontrada neste PDF.")
@@ -92,11 +96,11 @@ st.dataframe(
 )
 
 if st.button("Confirmar importação", type="primary"):
-    seguradora = client.table("seguradoras").select("id").eq("nome", "Suhai").execute().data
+    seguradora = client.table("seguradoras").select("id").eq("nome", seguradora_nome).execute().data
     seguradora_id = (
         seguradora[0]["id"]
         if seguradora
-        else client.table("seguradoras").insert({"nome": "Suhai"}).execute().data[0]["id"]
+        else client.table("seguradoras").insert({"nome": seguradora_nome}).execute().data[0]["id"]
     )
 
     # Motor de conciliação: procura crédito no OFX com mesma data/valor.
