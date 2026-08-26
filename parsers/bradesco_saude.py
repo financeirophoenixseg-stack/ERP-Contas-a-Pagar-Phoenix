@@ -53,6 +53,12 @@ def _valor_ultima_coluna(texto_linha: str) -> str:
     return valores[-1] if valores else "0,00"
 
 
+def detectar(texto: str) -> bool:
+    """Assinatura do layout Bradesco Saúde: título 'Resumo do Extrato' e o
+    rótulo 'PARCEIRO', ausentes no layout da Suhai."""
+    return "Resumo do Extrato" in texto and "PARCEIRO" in texto.upper()
+
+
 def _parse_header_pdf(caminho_pdf: str) -> dict:
     with pdfplumber.open(caminho_pdf) as pdf:
         texto = "\n".join(p.extract_text() or "" for p in pdf.pages)

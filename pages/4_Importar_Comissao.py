@@ -5,13 +5,13 @@ from pathlib import Path
 import streamlit as st
 
 from db import get_client
-from parsers import PARSERS
+from parsers import PARSERS, identificar_seguradora
 
 st.set_page_config(page_title="Importar Comissão", layout="wide")
 st.title("Importar demonstrativo de comissão")
 st.caption(
-    "A empresa responsável é identificada pelo CNPJ do corretor no demonstrativo. "
-    "Cada seguradora tem seu próprio layout — escolha qual abaixo."
+    "Envie o(s) arquivo(s) do demonstrativo — a seguradora é reconhecida automaticamente "
+    "pelo layout do PDF, e a empresa responsável pelo CNPJ do corretor."
 )
 
 try:
@@ -20,17 +20,15 @@ except RuntimeError as e:
     st.error(str(e))
     st.stop()
 
-seguradora_nome = st.selectbox("Seguradora", options=list(PARSERS.keys()))
-info = PARSERS[seguradora_nome]
-
-arquivos = []
-for i, rotulo in enumerate(info["arquivos"]):
-    arquivos.append(st.file_uploader(rotulo, key=f"upload_{i}"))
-if not all(arquivos):
+arquivos = st.file_uploader(
+    "Arquivo(s) do demonstrativo (PDF, e a planilha de detalhes se a seguradora exigir)",
+    accept_multiple_files=True,
+)
+if not arquivos:
     st.stop()
 
-raw_bytes = [a.getvalue() for a in arquivos]
-hash_arquivo = hashlib.sha256(b"".join(raw_bytes)).hexdigest()
+raw_por_nome = {a.name: a.getvalue() for a in arquivos}
+hash_arquivo = hashlib.sha256(b"".join(raw_por_nome[a.name] for a in arquivos)).hexdigest()
 
 ja_importado = (
     client.table("lotes_comissao").select("id").eq("hash_arquivo", hash_arquivo).execute().data
@@ -39,12 +37,38 @@ if ja_importado:
     st.warning("Este demonstrativo já foi importado anteriormente. Nenhuma ação será feita.")
     st.stop()
 
+pdfs = [a for a in arquivos if a.name.lower().endswith(".pdf")]
+if not pdfs:
+    st.error("Envie ao menos o PDF do demonstrativo.")
+    st.stop()
+
 with tempfile.TemporaryDirectory() as tmp:
-    caminhos = []
-    for arquivo, raw in zip(arquivos, raw_bytes):
+    caminho_por_nome = {}
+    for arquivo in arquivos:
         caminho = Path(tmp) / arquivo.name
-        caminho.write_bytes(raw)
-        caminhos.append(str(caminho))
+        caminho.write_bytes(raw_por_nome[arquivo.name])
+        caminho_por_nome[arquivo.name] = str(caminho)
+
+    seguradora_nome = identificar_seguradora(caminho_por_nome[pdfs[0].name])
+    if not seguradora_nome:
+        st.error(
+            "Não consegui identificar automaticamente a seguradora pelo layout deste PDF. "
+            "Verifique se é um demonstrativo de uma seguradora já suportada."
+        )
+        st.stop()
+
+    info = PARSERS[seguradora_nome]
+    st.success(f"Seguradora identificada automaticamente: **{seguradora_nome}**")
+
+    if len(arquivos) < len(info["arquivos"]):
+        st.error(
+            f"O demonstrativo da {seguradora_nome} também precisa de: "
+            f"{', '.join(info['arquivos'][1:])}. Envie junto com o PDF."
+        )
+        st.stop()
+
+    outros_nomes = [a.name for a in arquivos if a.name != pdfs[0].name]
+    caminhos = [caminho_por_nome[pdfs[0].name]] + [caminho_por_nome[n] for n in outros_nomes]
     lote = info["parse"](caminhos)
 
 if not lote.linhas:

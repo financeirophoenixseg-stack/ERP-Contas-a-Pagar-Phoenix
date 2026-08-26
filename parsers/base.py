@@ -8,6 +8,13 @@ sem precisar saber qual seguradora gerou o arquivo.
 
 from dataclasses import dataclass, field
 
+import pdfplumber
+
+
+def extrair_texto_pdf(caminho: str) -> str:
+    with pdfplumber.open(caminho) as pdf:
+        return "\n".join(p.extract_text() or "" for p in pdf.pages)
+
 
 @dataclass
 class LinhaComissao:

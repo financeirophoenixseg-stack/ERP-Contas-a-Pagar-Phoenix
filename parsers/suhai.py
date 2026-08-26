@@ -68,6 +68,12 @@ def _parse_data_br(data: str) -> str:
     return f"{match.group(3)}-{match.group(2)}-{match.group(1)}" if match else ""
 
 
+def detectar(texto: str) -> bool:
+    """Assinatura do layout Suhai: título do demonstrativo, sem o rótulo
+    'PARCEIRO' (que é específico do layout da Bradesco)."""
+    return "Demonstrativo de Comiss" in texto and "PARCEIRO" not in texto.upper()
+
+
 def parse(caminho: str) -> LoteComissao:
     with pdfplumber.open(caminho) as pdf:
         texto_completo = "\n".join(p.extract_text() or "" for p in pdf.pages)
