@@ -42,6 +42,22 @@ create table ofx_importacoes (
     importado_em timestamptz not null default now()
 );
 
+create table fornecedores (
+    id uuid primary key default gen_random_uuid(),
+    nome text not null,
+    documento text,                      -- CPF/CNPJ, quando disponível
+    created_at timestamptz not null default now()
+);
+
+create table plano_contas (
+    id uuid primary key default gen_random_uuid(),
+    codigo text not null unique,          -- ex: '4.1.1'
+    nome text not null,
+    tipo text not null,                   -- 'ativo' | 'passivo' | 'patrimonio_liquido' | 'receita' | 'despesa'
+    conta_pai_id uuid references plano_contas(id),
+    created_at timestamptz not null default now()
+);
+
 create table ofx_transacoes (
     id uuid primary key default gen_random_uuid(),
     ofx_importacao_id uuid not null references ofx_importacoes(id),
@@ -51,8 +67,24 @@ create table ofx_transacoes (
     valor numeric(14,2) not null,
     descricao text,
     conciliado boolean not null default false,
+    -- Classificação contábil (contas a pagar/receber além da conciliação de comissão):
+    cliente_id uuid references clientes(id),
+    fornecedor_id uuid references fornecedores(id),
+    plano_conta_id uuid references plano_contas(id),
     created_at timestamptz not null default now(),
     unique (conta_bancaria_id, fit_id)
+);
+
+-- Aprendizado: padrão de texto na descrição do OFX -> classificação sugerida,
+-- para que lançamentos parecidos futuros sejam identificados automaticamente
+-- (mesma ideia do "Litor OFX" antigo, agora persistida no banco).
+create table regras_identificacao (
+    id uuid primary key default gen_random_uuid(),
+    padrao_descricao text not null,       -- substring, comparado em minúsculas
+    cliente_id uuid references clientes(id),
+    fornecedor_id uuid references fornecedores(id),
+    plano_conta_id uuid references plano_contas(id),
+    created_at timestamptz not null default now()
 );
 
 create table lotes_comissao (
@@ -107,8 +139,11 @@ alter table empresas disable row level security;
 alter table contas_bancarias disable row level security;
 alter table clientes disable row level security;
 alter table seguradoras disable row level security;
+alter table fornecedores disable row level security;
+alter table plano_contas disable row level security;
 alter table ofx_importacoes disable row level security;
 alter table ofx_transacoes disable row level security;
 alter table lotes_comissao disable row level security;
 alter table movimentacoes_comissao disable row level security;
 alter table auditoria_alertas disable row level security;
+alter table regras_identificacao disable row level security;

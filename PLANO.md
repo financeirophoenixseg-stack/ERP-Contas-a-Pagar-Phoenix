@@ -1,9 +1,29 @@
-# Plano do Projeto — ERP Conciliação Bancária + Comissões (Phoenix / Vizentim)
+# Plano do Projeto — ERP Contas a Pagar/Receber (Phoenix / Vizentim)
 
 **Prazo:** 17/08/2026 → 28/09/2026 (6 semanas corridas)
-**Hoje:** 25/08/2026 — dia 9, 33 dias corridos restantes
+**Hoje:** 26/08/2026 — dia 10, 32 dias corridos restantes
 **Responsável:** financeiro@phoenixseg.com.br
 **Equipe:** só o usuário + Claude
+
+## Escopo ampliado (26/08) — contas a pagar/receber completo
+
+Além da conciliação de comissões (escopo original), o sistema vira um **contas a
+pagar/receber completo**:
+- Todo lançamento bancário que não bate com uma comissão vira uma **divergência
+  a classificar**: o usuário escolhe se é um **cliente** (recebimento) ou
+  **fornecedor** (pagamento), podendo cadastrar um novo na hora.
+- Cada lançamento é vinculado a uma conta do **plano de contas** (padrão para
+  corretora de seguros, 35 contas: Ativo/Passivo/Patrimônio Líquido/Receita/
+  Despesa — ver `seed_plano_contas.py`).
+- O sistema **aprende**: ao classificar, salva um padrão de texto da descrição
+  → próximos lançamentos parecidos já vêm com a classificação sugerida (tabela
+  `regras_identificacao`, mesma ideia do "Litor OFX" antigo do usuário).
+- **DRE e Balanço Patrimonial**: serão relatórios **calculados matematicamente**
+  a partir do plano de contas classificado — não gerados livremente por IA. A
+  IA entra só na sugestão de classificação (com o usuário sempre confirmando),
+  nunca escrevendo os números da demonstração financeira diretamente — isso é
+  uma decisão de integridade, para não arriscar relatório financeiro errado.
+  Entram no cronograma como parte do dashboard da Semana 5.
 
 > Projeto independente do `Phoenix-Web-Multiusuario-MVP-v5.12` (sistema de conferência de faturamento de plano de saúde). Não misturar prazos, dados ou decisões entre os dois.
 
@@ -76,8 +96,8 @@ Usuário entra no sistema, escolhe Phoenix / Vizentim / consolidado, importa OFX
 | 1 | 17/08 – 23/08 | Arquitetura, banco de dados (Supabase), multiempresa, usuários, estrutura base do financeiro |
 | 2 | 24/08 – 30/08 | Importador OFX + identificação automática Phoenix/Vizentim por conta + prevenção de duplicidade |
 | 3 | 31/08 – 06/09 | Importador Suhai (PDF) + criação automática de clientes + lotes/comissões/estornos/impostos |
-| 4 | 07/09 – 13/09 | Motor de conciliação automática + divergências + auditoria |
-| 5 | 14/09 – 20/09 | Dashboard financeiro + pesquisa por cliente + alertas |
+| 4 | 07/09 – 13/09 | Motor de conciliação automática + divergências + auditoria + classificação de lançamentos (cliente/fornecedor + plano de contas) |
+| 5 | 14/09 – 20/09 | Dashboard financeiro + pesquisa por cliente + alertas + DRE e Balanço Patrimonial (calculados a partir do plano de contas) |
 | 6 | 21/09 – 28/09 | Testes com arquivos reais, correções, segurança, backup, preparação para uso |
 
 Meta intermediária: sistema navegável importando os OFX reais já na semana 2; caso Suhai (R$ 1.013,05 bruto → R$ 977,59 líquido → conciliado) funcionando ponta a ponta na semana 3.
@@ -98,4 +118,6 @@ Meta intermediária: sistema navegável importando os OFX reais já na semana 2;
 - ✅ 26/08 — Supabase conectado de verdade (`.env` configurado, RLS desativada por ser app interno sem login ainda). Empresas Phoenix e Vizentim cadastradas, com as contas bancárias reais (756/4406-7/4928-0 → Vizentim, 756/4406-7/4930-1 → Phoenix).
 - ✅ 26/08 — Importador do demonstrativo Suhai (PDF): parser (`suhai_parser.py`) extrai corretor/CNPJ, data, valores brutos/líquidos/impostos e cada linha de comissão; identifica a empresa pelo CNPJ; cria clientes automaticamente; 10 testes unitários passando.
 - ✅ 26/08 — Motor de conciliação (v1) funcionando nos dois sentidos (Suhai→OFX e OFX→Suhai), incluindo alerta de auditoria quando o crédito aparece na conta de outra empresa. **Validado ponta a ponta contra o banco real com o caso de referência**: demonstrativo Suhai de 21/07/2026 (15 comissões, 13 clientes criados automaticamente, líquido R$ 977,59) conciliado automaticamente com o crédito Pix "SUHAI SEGURADORA" na conta 4928-0 (Vizentim) do mesmo dia — mesmo caso descrito na fase de planejamento do projeto.
+- ✅ 26/08 — Escopo ampliado para contas a pagar/receber completo (ver seção acima). Plano de contas padrão (35 contas) criado e populado no Supabase real (`seed_plano_contas.py`). Tabelas `fornecedores` e `regras_identificacao` criadas (`migrations/002_plano_contas_fornecedores.sql`).
+- ✅ 26/08 — Tela "Classificar Lançamentos": lista transações bancárias não conciliadas com nenhuma comissão, permite cadastrar cliente/fornecedor na hora, vincular à conta do plano de contas, e salva um padrão de identificação para sugerir automaticamente em lançamentos futuros parecidos. Lógica de sugestão (`regras_identificacao.py`) com testes automatizados; fluxo de gravação validado contra o Supabase real (criado e depois limpo um lançamento de teste, dados fictícios não ficaram no banco).
 - Próximo passo (Semana 3, restante): generalizar o importador para outras seguradoras além da Suhai; refinar casos de divergência/pendência na tela.
