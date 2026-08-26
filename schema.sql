@@ -123,6 +123,24 @@ create table movimentacoes_comissao (
     percentual_comissao numeric(5,2),
     valor_parcela numeric(14,2),
     valor_comissao numeric(14,2) not null, -- pode ser negativo (cancelamento/recuperação/estorno)
+    categoria text,                        -- 'agenciamento' | 'vitalicio' | null (sem regra de classificação cadastrada pro cliente)
+    created_at timestamptz not null default now()
+);
+
+-- Regra de classificação agenciamento x vitalício por cliente (saúde/vida):
+-- as primeiras `parcelas_agenciamento` parcelas de uma apólice são
+-- agenciamento (comissão de entrada, % alto); da parcela seguinte em
+-- diante é vitalícia (comissão recorrente, % baixo, dura enquanto a
+-- apólice estiver ativa). Percentuais são só para referência/conferência
+-- (a classificação de fato usa o nº da parcela, mais confiável que
+-- comparar percentual, que varia por contrato).
+create table regras_classificacao_comissao (
+    id uuid primary key default gen_random_uuid(),
+    cliente_id uuid not null unique references clientes(id),
+    parcelas_agenciamento int not null default 0,
+    percentual_agenciamento numeric(5,2),
+    percentual_vitalicio numeric(5,2),
+    meses_provisionar int not null default 24, -- quantos meses à frente provisionar quando detectar vitalício (saúde ~24, vida pode passar de 100)
     created_at timestamptz not null default now()
 );
 
@@ -160,6 +178,7 @@ create table lancamentos_previstos (
     parcela_atual int,
     parcela_total int,
     recorrente boolean not null default false,
+    apolice text,                           -- preenchido quando a provisão vem de comissão vitalícia (liga à apólice de origem, evita duplicar ao reimportar)
     created_at timestamptz not null default now()
 );
 
@@ -188,3 +207,4 @@ alter table movimentacoes_comissao disable row level security;
 alter table auditoria_alertas disable row level security;
 alter table regras_identificacao disable row level security;
 alter table lancamentos_previstos disable row level security;
+alter table regras_classificacao_comissao disable row level security;

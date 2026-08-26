@@ -1,10 +1,14 @@
 import hashlib
 import tempfile
+import uuid
+from datetime import date
 from pathlib import Path
 
 import streamlit as st
 
+from classificacao_comissao import classificar
 from db import get_client
+from lancamentos import gerar_recorrencia, somar_meses
 from parsers import PARSERS, identificar_seguradora
 
 st.set_page_config(page_title="Importar Comissão", layout="wide")
@@ -294,10 +298,54 @@ if st.button("Confirmar importação", type="primary"):
             return cliente_id
         return escolha  # mapeamento já existia no banco antes desta importação
 
+    def provisionar_vitalicio(cliente_id: str, apolice: str, valor: float, regra: dict) -> None:
+        """Comissão vitalícia = vai se repetir todo mês enquanto a apólice
+        durar. Se já existem provisões futuras (pendentes) dessa apólice,
+        só atualiza o valor pelo mais recente observado; senão, cria as
+        próximas `meses_provisionar` ocorrências."""
+        existentes = (
+            client.table("lancamentos_previstos")
+            .select("id")
+            .eq("cliente_id", cliente_id)
+            .eq("apolice", apolice)
+            .eq("tipo", "receber")
+            .eq("status", "previsto")
+            .execute()
+            .data
+            or []
+        )
+        if existentes:
+            client.table("lancamentos_previstos").update({"valor": valor}).eq(
+                "cliente_id", cliente_id
+            ).eq("apolice", apolice).eq("tipo", "receber").eq("status", "previsto").execute()
+            return
+
+        data_base = date.fromisoformat(lote.data_pagamento) if lote.data_pagamento else date.today()
+        grupo_id = str(uuid.uuid4())
+        for ocorrencia in gerar_recorrencia(valor, somar_meses(data_base, 1), regra["meses_provisionar"]):
+            client.table("lancamentos_previstos").insert(
+                {
+                    "empresa_id": empresa_id,
+                    "tipo": "receber",
+                    "descricao": f"Comissão vitalícia prevista — apólice {apolice}",
+                    "valor": ocorrencia.valor,
+                    "data_vencimento": ocorrencia.data_vencimento.isoformat(),
+                    "status": "previsto",
+                    "cliente_id": cliente_id,
+                    "grupo_id": grupo_id,
+                    "recorrente": True,
+                    "apolice": apolice,
+                }
+            ).execute()
+
     try:
         clientes_existentes = {
             c["nome"].strip().lower(): c["id"]
             for c in client.table("clientes").select("id, nome").execute().data or []
+        }
+        regras_por_cliente = {
+            r["cliente_id"]: r
+            for r in client.table("regras_classificacao_comissao").select("*").execute().data or []
         }
         inseridas = 0
         for linha in lote.linhas:
@@ -305,6 +353,9 @@ if st.button("Confirmar importação", type="primary"):
                 cliente_id = resolver_cliente_por_nome(linha.cliente, clientes_existentes)
             else:
                 cliente_id = resolver_cliente_por_apolice(linha.apolice, clientes_existentes)
+
+            regra = regras_por_cliente.get(cliente_id)
+            categoria = classificar(linha.parcela, regra)
 
             client.table("movimentacoes_comissao").insert(
                 {
@@ -316,9 +367,13 @@ if st.button("Confirmar importação", type="primary"):
                     "percentual_comissao": linha.percentual_comissao,
                     "valor_parcela": linha.valor_parcela,
                     "valor_comissao": linha.valor_comissao,
+                    "categoria": categoria,
                 }
             ).execute()
             inseridas += 1
+
+            if categoria == "vitalicio" and linha.apolice:
+                provisionar_vitalicio(cliente_id, linha.apolice, linha.valor_comissao, regra)
     except Exception as e:
         # desfaz o lote parcial para permitir nova tentativa (o hash_arquivo
         # senão ficaria "já importado" com dados incompletos, travado).
