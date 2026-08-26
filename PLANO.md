@@ -24,6 +24,11 @@ pagar/receber completo**:
   nunca escrevendo os números da demonstração financeira diretamente — isso é
   uma decisão de integridade, para não arriscar relatório financeiro errado.
   Entram no cronograma como parte do dashboard da Semana 5.
+- **Lançamentos previstos** (26/08, pedido do usuário): cadastro de despesa/
+  receita ANTES de acontecer — avulsa, parcelada ou fixa/recorrente (tabela
+  `lancamentos_previstos`, tela `Contas a Pagar e Receber`). Concilia sozinho
+  quando o crédito/débito correspondente aparece no OFX; senão dá pra marcar
+  como pago manualmente (ex.: pagamento em dinheiro).
 
 > Projeto independente do `Phoenix-Web-Multiusuario-MVP-v5.12` (sistema de conferência de faturamento de plano de saúde). Não misturar prazos, dados ou decisões entre os dois.
 
@@ -125,3 +130,4 @@ Meta intermediária: sistema navegável importando os OFX reais já na semana 2;
 - ✅ 26/08 — Tela `Importar Comissão` não pede mais para escolher a seguradora: detecta sozinha pelo layout (PDF e/ou planilha).
 - ✅ 26/08 — PDF e planilha da Bradesco Saúde viram fontes independentes (o usuário nem sempre tem os dois) — parser aceita qualquer combinação, extraindo os detalhes direto da tabela do PDF quando não há planilha. Corrigido bug de normalização do número de apólice (formato diferente em cada arquivo). Validado nas 3 combinações contra os arquivos reais.
 - ✅ 26/08 — **Primeira importação real da Bradesco Saúde feita pelo usuário**: apólice 1117397/1 → cliente real "Romar Indústria e Comércio de Materiais Hidr[áulicos]" (Vizentim), R$ 277,00. Um bug real apareceu no processo (RLS ainda ativa em `apolice_clientes` travou a confirmação no meio, e havia um bug separado: escolher um cliente já existente para uma apólice nova não salvava o mapeamento, só "+ Novo cliente" salvava) — ambos corrigidos; dados incompletos dessa tentativa foram completados manualmente sem duplicar nada. Adicionada reversão automática: se a confirmação falhar no meio do caminho, desfaz o lote parcial em vez de travar novas tentativas.
+- ✅ 26/08 — Módulo de **lançamentos previstos** (contas a pagar/receber avulsas, parceladas e fixas) construído e validado contra o Supabase real. Motor de conciliação do OFX estendido para também tentar bater com esses lançamentos previstos, além dos lotes de comissão.
