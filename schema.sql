@@ -26,6 +26,13 @@ create table clientes (
     created_at timestamptz not null default now()
 );
 
+create table apolice_clientes (
+    id uuid primary key default gen_random_uuid(),
+    apolice text not null unique,        -- ex: '1117397/1' — número de apólice/subfatura
+    cliente_id uuid not null references clientes(id),
+    created_at timestamptz not null default now()
+);
+
 create table seguradoras (
     id uuid primary key default gen_random_uuid(),
     nome text not null unique             -- 'Suhai', 'Bradesco', ...
@@ -138,6 +145,7 @@ create index on lotes_comissao (status);
 alter table empresas disable row level security;
 alter table contas_bancarias disable row level security;
 alter table clientes disable row level security;
+alter table apolice_clientes disable row level security;
 alter table seguradoras disable row level security;
 alter table fornecedores disable row level security;
 alter table plano_contas disable row level security;

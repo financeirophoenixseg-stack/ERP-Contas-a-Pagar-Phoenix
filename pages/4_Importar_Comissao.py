@@ -11,7 +11,7 @@ st.set_page_config(page_title="Importar Comissão", layout="wide")
 st.title("Importar demonstrativo de comissão")
 st.caption(
     "A empresa responsável é identificada pelo CNPJ do corretor no demonstrativo. "
-    "Cada seguradora tem seu próprio layout de PDF — escolha qual abaixo."
+    "Cada seguradora tem seu próprio layout — escolha qual abaixo."
 )
 
 try:
@@ -21,14 +21,16 @@ except RuntimeError as e:
     st.stop()
 
 seguradora_nome = st.selectbox("Seguradora", options=list(PARSERS.keys()))
-parse = PARSERS[seguradora_nome]
+info = PARSERS[seguradora_nome]
 
-arquivo = st.file_uploader(f"Selecione o PDF do demonstrativo ({seguradora_nome})", type=["pdf"])
-if not arquivo:
+arquivos = []
+for i, rotulo in enumerate(info["arquivos"]):
+    arquivos.append(st.file_uploader(rotulo, key=f"upload_{i}"))
+if not all(arquivos):
     st.stop()
 
-raw = arquivo.getvalue()
-hash_arquivo = hashlib.sha256(raw).hexdigest()
+raw_bytes = [a.getvalue() for a in arquivos]
+hash_arquivo = hashlib.sha256(b"".join(raw_bytes)).hexdigest()
 
 ja_importado = (
     client.table("lotes_comissao").select("id").eq("hash_arquivo", hash_arquivo).execute().data
@@ -38,12 +40,15 @@ if ja_importado:
     st.stop()
 
 with tempfile.TemporaryDirectory() as tmp:
-    caminho = Path(tmp) / arquivo.name
-    caminho.write_bytes(raw)
-    lote = parse(str(caminho))
+    caminhos = []
+    for arquivo, raw in zip(arquivos, raw_bytes):
+        caminho = Path(tmp) / arquivo.name
+        caminho.write_bytes(raw)
+        caminhos.append(str(caminho))
+    lote = info["parse"](caminhos)
 
 if not lote.linhas:
-    st.error("Nenhuma linha de comissão encontrada neste PDF.")
+    st.error("Nenhuma linha de comissão encontrada nestes arquivos.")
     st.stop()
 
 col1, col2, col3 = st.columns(3)
@@ -80,7 +85,7 @@ st.subheader(f"{len(lote.linhas)} movimentações de comissão")
 st.dataframe(
     [
         {
-            "Cliente": l.cliente,
+            "Cliente": l.cliente or "(por apólice)",
             "Apólice": l.apolice,
             "Endosso": l.endosso,
             "Parcela": l.parcela,
@@ -94,6 +99,52 @@ st.dataframe(
     use_container_width=True,
     hide_index=True,
 )
+
+# Linhas sem nome de cliente direto (ex.: Bradesco Saúde) são identificadas
+# pela apólice — resolvidas via apolice_clientes, com cadastro manual na
+# primeira vez que uma apólice aparece.
+apolices_sem_nome = sorted({l.apolice for l in lote.linhas if not l.cliente})
+mapa_apolice_cliente = {}
+if apolices_sem_nome:
+    mapeamentos = (
+        client.table("apolice_clientes").select("apolice, cliente_id").execute().data or []
+    )
+    mapa_apolice_cliente = {m["apolice"]: m["cliente_id"] for m in mapeamentos}
+
+    clientes_todos = client.table("clientes").select("id, nome").order("nome").execute().data or []
+    nomes_por_id_cliente = {c["id"]: c["nome"] for c in clientes_todos}
+
+    apolices_novas = [a for a in apolices_sem_nome if a not in mapa_apolice_cliente]
+    if apolices_novas:
+        st.divider()
+        st.subheader("Apólices sem cliente cadastrado")
+        st.caption(
+            "Este demonstrativo não traz o nome do cliente, só o número da apólice. "
+            "Associe cada apólice a um cliente uma única vez — nas próximas importações "
+            "ela já será reconhecida automaticamente."
+        )
+        for apolice in apolices_novas:
+            opcoes = ["+ Novo cliente"] + list(nomes_por_id_cliente.keys())
+            escolha = st.selectbox(
+                f"Cliente da apólice {apolice}",
+                options=opcoes,
+                format_func=lambda i: "+ Novo cliente" if i == "+ Novo cliente" else nomes_por_id_cliente[i],
+                key=f"apolice_{apolice}",
+            )
+            if escolha == "+ Novo cliente":
+                novo_nome = st.text_input("Nome do cliente", key=f"novo_cliente_apolice_{apolice}")
+                mapa_apolice_cliente[apolice] = ("novo", novo_nome)
+            else:
+                mapa_apolice_cliente[apolice] = escolha
+
+faltando_resolver = [
+    a for a in apolices_sem_nome
+    if a not in mapa_apolice_cliente or mapa_apolice_cliente[a] == ("novo", "")
+]
+
+if faltando_resolver:
+    st.info("Associe um cliente a todas as apólices acima para poder confirmar a importação.")
+    st.stop()
 
 if st.button("Confirmar importação", type="primary"):
     seguradora = client.table("seguradoras").select("id").eq("nome", seguradora_nome).execute().data
@@ -137,7 +188,7 @@ if st.button("Confirmar importação", type="primary"):
             {
                 "seguradora_id": seguradora_id,
                 "empresa_id": empresa_id,
-                "arquivo_origem": arquivo.name,
+                "arquivo_origem": ", ".join(a.name for a in arquivos),
                 "hash_arquivo": hash_arquivo,
                 "data_pagamento": lote.data_pagamento,
                 "valor_bruto": lote.valor_bruto,
@@ -171,18 +222,35 @@ if st.button("Confirmar importação", type="primary"):
         for c in client.table("clientes").select("id, nome").execute().data or []
     }
 
-    inseridas = 0
-    for linha in lote.linhas:
-        chave = linha.cliente.strip().lower()
+    def resolver_cliente_por_nome(nome: str) -> str:
+        chave = nome.strip().lower()
         cliente_id = clientes_existentes.get(chave)
         if not cliente_id:
             novo = (
                 client.table("clientes")
-                .insert({"nome": linha.cliente, "empresa_principal_id": empresa_id})
+                .insert({"nome": nome.strip(), "empresa_principal_id": empresa_id})
                 .execute()
             )
             cliente_id = novo.data[0]["id"]
             clientes_existentes[chave] = cliente_id
+        return cliente_id
+
+    def resolver_cliente_por_apolice(apolice: str) -> str:
+        escolha = mapa_apolice_cliente[apolice]
+        if isinstance(escolha, tuple):  # ("novo", nome)
+            cliente_id = resolver_cliente_por_nome(escolha[1])
+            client.table("apolice_clientes").insert(
+                {"apolice": apolice, "cliente_id": cliente_id}
+            ).execute()
+            return cliente_id
+        return escolha  # já é o cliente_id existente (do banco ou selecionado agora)
+
+    inseridas = 0
+    for linha in lote.linhas:
+        if linha.cliente:
+            cliente_id = resolver_cliente_por_nome(linha.cliente)
+        else:
+            cliente_id = resolver_cliente_por_apolice(linha.apolice)
 
         client.table("movimentacoes_comissao").insert(
             {
