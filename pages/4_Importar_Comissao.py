@@ -64,12 +64,18 @@ col1, col2, col3 = st.columns(3)
 col1.metric("Data de pagamento", lote.data_pagamento or "?")
 col2.metric("Valor bruto (tributário)", f"R$ {lote.valor_bruto:,.2f}")
 col3.metric("Valor líquido", f"R$ {lote.valor_liquido:,.2f}")
-st.caption(f"Corretor: {lote.corretor} — CNPJ: {lote.cnpj}")
+identificador = f"CNPJ: {lote.cnpj}" if lote.cnpj else f"SUSEP: {lote.susep}" if lote.susep else ""
+st.caption(f"Corretor: {lote.corretor} — {identificador}")
 
-empresas = client.table("empresas").select("id, nome, cnpj").execute().data or []
+empresas = client.table("empresas").select("id, nome, cnpj, susep").execute().data or []
 empresa_por_cnpj = {e["cnpj"]: e for e in empresas if e.get("cnpj")}
 empresa_resolvida = empresa_por_cnpj.get(lote.cnpj) if lote.cnpj else None
 identificado_por = "CNPJ"
+
+if not empresa_resolvida and lote.susep:
+    empresa_por_susep = {e["susep"]: e for e in empresas if e.get("susep")}
+    empresa_resolvida = empresa_por_susep.get(lote.susep)
+    identificado_por = "SUSEP"
 
 if not empresa_resolvida and lote.conta:
     # sem CNPJ (ex.: só a planilha foi enviada) — tenta pela conta bancária,
@@ -91,7 +97,12 @@ if empresa_resolvida:
     st.success(f"Empresa identificada automaticamente pelo {identificado_por}: **{empresa_resolvida['nome']}**")
     empresa_id = empresa_resolvida["id"]
 else:
-    motivo = f"CNPJ '{lote.cnpj}'" if lote.cnpj else f"conta '{lote.conta}'" if lote.conta else "nenhum dado"
+    motivo = (
+        f"CNPJ '{lote.cnpj}'" if lote.cnpj
+        else f"SUSEP '{lote.susep}'" if lote.susep
+        else f"conta '{lote.conta}'" if lote.conta
+        else "nenhum dado"
+    )
     st.warning(
         f"{motivo} não está vinculado a nenhuma empresa cadastrada. Selecione manualmente:"
     )
@@ -108,6 +119,14 @@ else:
             st.info("CNPJ salvo.")
         except Exception as e:
             st.error(f"Erro ao salvar CNPJ: {e}")
+    if lote.susep and st.checkbox(
+        f"Salvar SUSEP {lote.susep} para esta empresa (próximas importações serão automáticas)"
+    ):
+        try:
+            client.table("empresas").update({"susep": lote.susep}).eq("id", empresa_id).execute()
+            st.info("SUSEP salvo.")
+        except Exception as e:
+            st.error(f"Erro ao salvar SUSEP: {e}")
 
 st.divider()
 st.subheader(f"{len(lote.linhas)} movimentações de comissão")

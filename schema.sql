@@ -5,6 +5,7 @@ create table empresas (
     id uuid primary key default gen_random_uuid(),
     nome text not null unique,          -- 'Phoenix', 'Vizentim', ...
     cnpj text unique,                    -- CNPJ do corretor, usado para reconhecer a empresa em demonstrativos de comissão
+    susep text unique,                   -- código SUSEP do corretor, idem para seguradoras que identificam por SUSEP (ex.: Porto Seguro)
     created_at timestamptz not null default now()
 );
 

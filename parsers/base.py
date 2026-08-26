@@ -47,3 +47,6 @@ class LoteComissao:
     banco: str = ""
     agencia: str = ""
     conta: str = ""
+    # Idem para seguradoras que identificam o corretor por código SUSEP em
+    # vez de CNPJ (ex.: Porto Seguro).
+    susep: str = ""

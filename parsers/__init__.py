@@ -5,12 +5,15 @@ Cada entrada declara:
   texto de um PDF enviado.
 - `detectar_xls(colunas) -> bool` (opcional): reconhece esse layout pelas
   colunas de uma planilha enviada.
+- `detectar_html(conteudo) -> bool` (opcional): reconhece esse layout pelo
+  conteúdo de um arquivo HTML/`.do` enviado.
 - `parse(caminhos) -> LoteComissao`: recebe os caminhos de TODOS os arquivos
   enviados (o parser decide o que usar de cada um).
 
-Uma seguradora pode ter só `detectar_pdf` (ex.: Suhai, que só manda PDF), só
-`detectar_xls`, ou os dois (ex.: Bradesco Saúde, que manda os dois relatórios
-de forma independente — qualquer um sozinho já é suficiente).
+Uma seguradora pode ter qualquer combinação dessas três detecções — Suhai só
+tem `detectar_pdf`; Bradesco Saúde tem `detectar_pdf` e `detectar_xls`; Porto
+Seguro tem `detectar_pdf` e `detectar_html` — em todos os casos, qualquer um
+dos arquivos aceitos sozinho já é suficiente.
 
 Para adicionar uma nova seguradora: criar `parsers/<nome>.py` com essas
 funções, validar contra documento(s) real(is), e registrar aqui.
@@ -18,7 +21,7 @@ funções, validar contra documento(s) real(is), e registrar aqui.
 
 import pandas as pd
 
-from parsers import bradesco_saude, suhai
+from parsers import bradesco_saude, porto_seguro, suhai
 from parsers.base import LinhaComissao, LoteComissao, extrair_texto_pdf
 
 PARSERS = {
@@ -31,6 +34,11 @@ PARSERS = {
         "detectar_xls": bradesco_saude.detectar_xls,
         "parse": bradesco_saude.parse,
     },
+    "Porto Seguro": {
+        "detectar_pdf": porto_seguro.detectar_pdf,
+        "detectar_html": porto_seguro.detectar_html,
+        "parse": porto_seguro.parse,
+    },
 }
 
 
@@ -38,20 +46,30 @@ def _colunas_xlsx(caminho: str) -> list[str]:
     return [str(c) for c in pd.read_excel(caminho, header=1, nrows=0).columns]
 
 
+def _conteudo_html(caminho: str) -> str:
+    with open(caminho, encoding="latin-1") as f:
+        return f.read()
+
+
 def identificar_seguradora(caminhos: list[str]) -> str | None:
     """Devolve o nome da seguradora cujo layout bate com os arquivos
-    enviados (PDF e/ou planilha), ou None se nenhuma (ou mais de uma) bater."""
+    enviados (PDF e/ou planilha e/ou HTML), ou None se nenhuma (ou mais de
+    uma) bater."""
     caminho_pdf = next((c for c in caminhos if c.lower().endswith(".pdf")), None)
     caminho_xls = next((c for c in caminhos if c.lower().endswith((".xls", ".xlsx"))), None)
+    caminho_html = next((c for c in caminhos if c.lower().endswith((".html", ".htm", ".do"))), None)
 
     texto_pdf = extrair_texto_pdf(caminho_pdf) if caminho_pdf else None
     colunas_xls = _colunas_xlsx(caminho_xls) if caminho_xls else None
+    conteudo_html = _conteudo_html(caminho_html) if caminho_html else None
 
     candidatos = set()
     for nome, info in PARSERS.items():
         if texto_pdf is not None and info.get("detectar_pdf") and info["detectar_pdf"](texto_pdf):
             candidatos.add(nome)
         if colunas_xls is not None and info.get("detectar_xls") and info["detectar_xls"](colunas_xls):
+            candidatos.add(nome)
+        if conteudo_html is not None and info.get("detectar_html") and info["detectar_html"](conteudo_html):
             candidatos.add(nome)
 
     return next(iter(candidatos)) if len(candidatos) == 1 else None
