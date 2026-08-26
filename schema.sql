@@ -99,3 +99,16 @@ create table auditoria_alertas (
 create index on ofx_transacoes (conta_bancaria_id, data, valor);
 create index on movimentacoes_comissao (cliente_id);
 create index on lotes_comissao (status);
+
+-- RLS vem habilitada por padrão no Supabase. Este é um app interno (sem
+-- login de usuário final ainda) acessado só pela chave publishable/anon,
+-- então desativamos por enquanto — revisar quando entrar autenticação real.
+alter table empresas disable row level security;
+alter table contas_bancarias disable row level security;
+alter table clientes disable row level security;
+alter table seguradoras disable row level security;
+alter table ofx_importacoes disable row level security;
+alter table ofx_transacoes disable row level security;
+alter table lotes_comissao disable row level security;
+alter table movimentacoes_comissao disable row level security;
+alter table auditoria_alertas disable row level security;

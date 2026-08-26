@@ -95,7 +95,7 @@ if not pode_importar:
     st.stop()
 
 if st.button("Confirmar importação", type="primary"):
-    inseridas, duplicadas = 0, 0
+    inseridas, duplicadas, conciliadas = 0, 0, 0
     conta_ids_no_arquivo = {linha["_conta_id"] for linha in linhas}
     importacao_ids = {}
     for conta_id in conta_ids_no_arquivo:
@@ -114,18 +114,47 @@ if st.button("Confirmar importação", type="primary"):
 
     for linha in linhas:
         try:
-            client.table("ofx_transacoes").insert(
-                {
-                    "ofx_importacao_id": importacao_ids[linha["_conta_id"]],
-                    "conta_bancaria_id": linha["_conta_id"],
-                    "fit_id": linha["_fit_id"] or None,
-                    "data": linha["Data"],
-                    "valor": linha["Valor"],
-                    "descricao": linha["Descrição"],
-                }
-            ).execute()
+            txn = (
+                client.table("ofx_transacoes")
+                .insert(
+                    {
+                        "ofx_importacao_id": importacao_ids[linha["_conta_id"]],
+                        "conta_bancaria_id": linha["_conta_id"],
+                        "fit_id": linha["_fit_id"] or None,
+                        "data": linha["Data"],
+                        "valor": linha["Valor"],
+                        "descricao": linha["Descrição"],
+                    }
+                )
+                .execute()
+            )
             inseridas += 1
+
+            # Tenta conciliar com algum lote de comissao ainda pendente da
+            # mesma empresa, mesma data e mesmo valor liquido.
+            conta = client.table("contas_bancarias").select("empresa_id").eq("id", linha["_conta_id"]).execute().data[0]
+            candidatos = (
+                client.table("lotes_comissao")
+                .select("id, valor_liquido")
+                .eq("empresa_id", conta["empresa_id"])
+                .eq("data_pagamento", linha["Data"])
+                .eq("status", "pendente")
+                .execute()
+                .data
+                or []
+            )
+            match = next((c for c in candidatos if abs(c["valor_liquido"] - linha["Valor"]) < 0.005), None)
+            if match:
+                txn_id = txn.data[0]["id"]
+                client.table("lotes_comissao").update(
+                    {"status": "conciliado", "ofx_transacao_id": txn_id}
+                ).eq("id", match["id"]).execute()
+                client.table("ofx_transacoes").update({"conciliado": True}).eq("id", txn_id).execute()
+                conciliadas += 1
         except Exception:
             duplicadas += 1  # violação do unique (conta_bancaria_id, fit_id)
 
-    st.success(f"Importação concluída: {inseridas} novas movimentações, {duplicadas} já existiam.")
+    msg = f"Importação concluída: {inseridas} novas movimentações, {duplicadas} já existiam."
+    if conciliadas:
+        msg += f" {conciliadas} lote(s) de comissão pendente(s) foram conciliados automaticamente."
+    st.success(msg)
