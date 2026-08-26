@@ -144,13 +144,38 @@ if st.button("Confirmar importação", type="primary"):
                 or []
             )
             match = next((c for c in candidatos if abs(c["valor_liquido"] - linha["Valor"]) < 0.005), None)
+            txn_id = txn.data[0]["id"]
             if match:
-                txn_id = txn.data[0]["id"]
                 client.table("lotes_comissao").update(
                     {"status": "conciliado", "ofx_transacao_id": txn_id}
                 ).eq("id", match["id"]).execute()
                 client.table("ofx_transacoes").update({"conciliado": True}).eq("id", txn_id).execute()
                 conciliadas += 1
+            else:
+                # Tenta conciliar com uma conta a pagar/receber prevista
+                # (mesma empresa, mesmo tipo pela direção do valor, mesmo
+                # valor). Aceita alguns dias de diferença na data, já que o
+                # crédito/débito pode cair antes/depois do vencimento previsto.
+                tipo_esperado = "receber" if linha["Valor"] > 0 else "pagar"
+                previstos = (
+                    client.table("lancamentos_previstos")
+                    .select("id, valor")
+                    .eq("empresa_id", conta["empresa_id"])
+                    .eq("tipo", tipo_esperado)
+                    .eq("status", "previsto")
+                    .execute()
+                    .data
+                    or []
+                )
+                match_previsto = next(
+                    (p for p in previstos if abs(p["valor"] - abs(linha["Valor"])) < 0.005), None
+                )
+                if match_previsto:
+                    client.table("lancamentos_previstos").update(
+                        {"status": "pago", "data_pagamento": linha["Data"], "ofx_transacao_id": txn_id}
+                    ).eq("id", match_previsto["id"]).execute()
+                    client.table("ofx_transacoes").update({"conciliado": True}).eq("id", txn_id).execute()
+                    conciliadas += 1
         except Exception:
             duplicadas += 1  # violação do unique (conta_bancaria_id, fit_id)
 

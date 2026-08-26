@@ -135,6 +135,37 @@ create table auditoria_alertas (
     created_at timestamptz not null default now()
 );
 
+-- Contas a pagar/receber PREVISTAS: diferente de ofx_transacoes (o que já
+-- aconteceu no banco) e de lotes_comissao (comissão já recebida), esta
+-- tabela é o lançamento planejado ANTES de acontecer — avulso, parcelado
+-- (várias linhas com o mesmo grupo_id) ou fixo/recorrente (idem). Quando o
+-- OFX correspondente chega, o motor de conciliação marca como 'pago' e
+-- vincula ofx_transacao_id, do mesmo jeito que já faz com lotes_comissao.
+create table lancamentos_previstos (
+    id uuid primary key default gen_random_uuid(),
+    empresa_id uuid not null references empresas(id),
+    tipo text not null,                    -- 'pagar' | 'receber'
+    descricao text not null,
+    valor numeric(14,2) not null,
+    data_vencimento date not null,
+    status text not null default 'previsto', -- 'previsto' | 'pago' | 'atrasado' | 'cancelado'
+    data_pagamento date,
+    cliente_id uuid references clientes(id),
+    fornecedor_id uuid references fornecedores(id),
+    plano_conta_id uuid references plano_contas(id),
+    conta_bancaria_id uuid references contas_bancarias(id),
+    ofx_transacao_id uuid references ofx_transacoes(id),
+    grupo_id uuid,                          -- liga parcelas/recorrências do mesmo lançamento
+    parcela_atual int,
+    parcela_total int,
+    recorrente boolean not null default false,
+    created_at timestamptz not null default now()
+);
+
+create index on lancamentos_previstos (empresa_id, status, data_vencimento);
+create index on lancamentos_previstos (tipo, status);
+create index on lancamentos_previstos (grupo_id);
+
 create index on ofx_transacoes (conta_bancaria_id, data, valor);
 create index on movimentacoes_comissao (cliente_id);
 create index on lotes_comissao (status);
@@ -155,3 +186,4 @@ alter table lotes_comissao disable row level security;
 alter table movimentacoes_comissao disable row level security;
 alter table auditoria_alertas disable row level security;
 alter table regras_identificacao disable row level security;
+alter table lancamentos_previstos disable row level security;
