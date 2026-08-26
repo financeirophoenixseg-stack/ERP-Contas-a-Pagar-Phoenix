@@ -92,4 +92,8 @@ Meta intermediária: sistema navegável importando os OFX reais já na semana 2;
 ## Status
 
 - ✅ 25/08 — Pasta e repositório criados, plano e cronograma documentados, stack decidida.
-- Próximo passo: modelo de dados (schema Supabase) para empresas, contas bancárias, clientes, negócios, seguradoras, lotes e movimentações de comissão.
+- ✅ 25/08 — Schema do banco (Supabase) criado em `schema.sql`; repositório publicado no GitHub (`ERP-Contas-a-Pagar-Phoenix`, privado) com rotina semanal de check-in.
+- ✅ 26/08 — Cadastro de Empresas e Contas Bancárias (Streamlit) funcionando.
+- ✅ 26/08 — Importador de OFX: parser Python portado da lógica já validada em `Litor OFX - Atualizado/src/app.js` (regex por tag, fallback de encoding windows-1252, dedup por FITID), 4 testes automatizados passando incluindo o caso de referência real (Suhai, 21/07/2026, R$ 977,59, conta 4928-0). Tela de importação identifica a empresa pela conta cadastrada e bloqueia contas não cadastradas.
+- ⚠️ Pendente do usuário: credenciais do Supabase (`SUPABASE_URL`/`SUPABASE_KEY`) ainda não configuradas em `.env` — sem isso nada persiste de verdade, só a interface foi validada localmente.
+- Próximo passo: importador do demonstrativo Suhai (PDF) + criação automática de clientes + lotes/comissões (Semana 3).
