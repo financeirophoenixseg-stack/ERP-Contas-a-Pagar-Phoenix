@@ -5,6 +5,7 @@ from postgrest.exceptions import APIError
 
 from db import get_client
 from ofx_parser import decode_ofx_bytes, parse_ofx
+from regras_identificacao import sugerir
 
 st.set_page_config(page_title="Importar OFX", layout="wide")
 st.title("Importar extrato OFX")
@@ -97,6 +98,7 @@ if not pode_importar:
 
 if st.button("Confirmar importação", type="primary"):
     inseridas, duplicadas, conciliadas = 0, 0, 0
+    regras_identificacao = client.table("regras_identificacao").select("*").execute().data or []
     conta_ids_no_arquivo = {linha["_conta_id"] for linha in linhas}
     importacao_ids = {}
     for conta_id in conta_ids_no_arquivo:
@@ -177,6 +179,48 @@ if st.button("Confirmar importação", type="primary"):
                     ).eq("id", match_previsto["id"]).execute()
                     client.table("ofx_transacoes").update({"conciliado": True}).eq("id", txn_id).execute()
                     conciliadas += 1
+                else:
+                    # Última tentativa: despesa/receita fixa cujo valor varia
+                    # (ex.: conta de luz) — reconhece o fornecedor/cliente pela
+                    # descrição já ensinada (Classificar Lançamentos) e casa
+                    # com uma previsão do MESMO MÊS, mesmo que o valor seja
+                    # diferente do provisionado. Atualiza o valor (e o das
+                    # próximas ocorrências da mesma recorrência) pelo real.
+                    regra_desc = sugerir(regras_identificacao, linha["Descrição"])
+                    if regra_desc and (regra_desc.get("fornecedor_id") or regra_desc.get("cliente_id")):
+                        mes_txn = linha["Data"][:7]
+                        query = (
+                            client.table("lancamentos_previstos")
+                            .select("id, grupo_id, valor, data_vencimento")
+                            .eq("empresa_id", conta["empresa_id"])
+                            .eq("tipo", tipo_esperado)
+                            .eq("status", "previsto")
+                        )
+                        if regra_desc.get("fornecedor_id"):
+                            query = query.eq("fornecedor_id", regra_desc["fornecedor_id"])
+                        else:
+                            query = query.eq("cliente_id", regra_desc["cliente_id"])
+                        candidatos_fixa = query.execute().data or []
+                        candidatos_mes = [c for c in candidatos_fixa if (c["data_vencimento"] or "")[:7] == mes_txn]
+                        if len(candidatos_mes) == 1:
+                            escolhido = candidatos_mes[0]
+                            valor_real = abs(linha["Valor"])
+                            client.table("lancamentos_previstos").update(
+                                {
+                                    "status": "pago",
+                                    "data_pagamento": linha["Data"],
+                                    "ofx_transacao_id": txn_id,
+                                    "valor": valor_real,
+                                }
+                            ).eq("id", escolhido["id"]).execute()
+                            if escolhido.get("grupo_id"):
+                                # propaga o valor real para as proximas ocorrencias
+                                # ja provisionadas da mesma recorrencia (ex.: conta fixa).
+                                client.table("lancamentos_previstos").update({"valor": valor_real}).eq(
+                                    "grupo_id", escolhido["grupo_id"]
+                                ).eq("status", "previsto").execute()
+                            client.table("ofx_transacoes").update({"conciliado": True}).eq("id", txn_id).execute()
+                            conciliadas += 1
         except APIError as e:
             if e.code == "23505":  # unique_violation: (conta_bancaria_id, fit_id) já existe
                 duplicadas += 1
