@@ -3,11 +3,15 @@ from datetime import date
 
 import streamlit as st
 
+import sharepoint
 from db import get_client
 
 st.set_page_config(page_title="Anexos", layout="wide")
 st.title("Anexos — Boletos e Comprovantes")
-st.caption("Guarda os arquivos no Supabase Storage, ligados (opcionalmente) a uma conta a pagar/receber.")
+st.caption(
+    "Guarda os arquivos no Supabase Storage, ligados (opcionalmente) a uma conta a pagar/receber. "
+    + ("Uma cópia é enviada automaticamente para o SharePoint da empresa." if sharepoint.esta_configurado() else "")
+)
 
 try:
     client = get_client()
@@ -59,6 +63,14 @@ if arquivo and st.button("Salvar anexo", type="primary"):
             }
         ).execute()
         st.success(f"Anexo '{arquivo.name}' salvo.")
+
+        if sharepoint.esta_configurado():
+            try:
+                sharepoint.enviar_arquivo(caminho_storage, arquivo.getvalue())
+                st.success("Cópia enviada ao SharePoint.")
+            except Exception as e:
+                st.warning(f"Anexo salvo no sistema, mas a cópia para o SharePoint falhou: {e}")
+
         st.rerun()
     except Exception as e:
         st.error(f"Erro ao salvar anexo: {e}")
@@ -95,5 +107,10 @@ else:
             if st.button("Apagar", key=f"apagar_{a['id']}"):
                 client.storage.from_(BUCKET).remove([a["storage_path"]])
                 client.table("anexos").delete().eq("id", a["id"]).execute()
+                if sharepoint.esta_configurado():
+                    try:
+                        sharepoint.remover_arquivo(a["storage_path"])
+                    except Exception as e:
+                        st.warning(f"Não foi possível remover a cópia no SharePoint: {e}")
                 st.success("Anexo apagado.")
                 st.rerun()
