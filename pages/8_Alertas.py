@@ -39,11 +39,12 @@ else:
                 st.rerun()
 
 st.divider()
-st.subheader("Lançamentos previstos vencidos")
-hoje = date.today().isoformat()
+st.header("Contas atrasadas")
+hoje_data = date.today()
+hoje = hoje_data.isoformat()
 vencidos = (
     client.table("lancamentos_previstos")
-    .select("tipo, descricao, valor, data_vencimento, empresas(nome)")
+    .select("tipo, descricao, valor, data_vencimento, empresas(nome), clientes(nome), fornecedores(nome)")
     .eq("status", "previsto")
     .lt("data_vencimento", hoje)
     .order("data_vencimento")
@@ -51,21 +52,39 @@ vencidos = (
     .data
     or []
 )
-if vencidos:
-    st.dataframe(
-        [
-            {
-                "Vencimento": v["data_vencimento"],
-                "Empresa": (v.get("empresas") or {}).get("nome"),
-                "Tipo": v["tipo"],
-                "Descrição": v["descricao"],
-                "Valor": v["valor"],
-            }
-            for v in vencidos
-        ],
-        use_container_width=True,
-        hide_index=True,
-    )
-    st.caption("Resolva em **Contas a Pagar e Receber** (marcar como pago ou cancelar).")
+
+
+def _linha_atrasada(v: dict) -> dict:
+    dias = (hoje_data - date.fromisoformat(v["data_vencimento"])).days
+    terceiro = (v.get("clientes") or {}).get("nome") or (v.get("fornecedores") or {}).get("nome") or "-"
+    return {
+        "Vencimento": v["data_vencimento"],
+        "Dias em atraso": dias,
+        "Empresa": (v.get("empresas") or {}).get("nome"),
+        "Cliente/Fornecedor": terceiro,
+        "Descrição": v["descricao"],
+        "Valor": v["valor"],
+    }
+
+
+atrasadas_pagar = [_linha_atrasada(v) for v in vencidos if v["tipo"] == "pagar"]
+atrasadas_receber = [_linha_atrasada(v) for v in vencidos if v["tipo"] == "receber"]
+
+col1, col2 = st.columns(2)
+col1.metric("Total atrasado a pagar", f"R$ {sum(l['Valor'] for l in atrasadas_pagar):,.2f}", f"{len(atrasadas_pagar)} conta(s)")
+col2.metric("Total atrasado a receber", f"R$ {sum(l['Valor'] for l in atrasadas_receber):,.2f}", f"{len(atrasadas_receber)} conta(s)")
+
+st.subheader("A pagar — atrasadas")
+if atrasadas_pagar:
+    st.dataframe(atrasadas_pagar, use_container_width=True, hide_index=True)
 else:
-    st.info("Nenhum lançamento vencido.")
+    st.info("Nenhuma conta a pagar atrasada.")
+
+st.subheader("A receber — atrasadas")
+if atrasadas_receber:
+    st.dataframe(atrasadas_receber, use_container_width=True, hide_index=True)
+else:
+    st.info("Nenhuma conta a receber atrasada.")
+
+if vencidos:
+    st.caption("Resolva em **Contas a Pagar e Receber** (marcar como pago ou cancelar).")
