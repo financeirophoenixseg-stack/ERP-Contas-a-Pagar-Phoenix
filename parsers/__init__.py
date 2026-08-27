@@ -7,13 +7,15 @@ Cada entrada declara:
   colunas de uma planilha enviada.
 - `detectar_html(conteudo) -> bool` (opcional): reconhece esse layout pelo
   conteúdo de um arquivo HTML/`.do` enviado.
+- `detectar_csv(colunas) -> bool` (opcional): reconhece esse layout pelas
+  colunas de um CSV enviado.
 - `parse(caminhos) -> LoteComissao`: recebe os caminhos de TODOS os arquivos
   enviados (o parser decide o que usar de cada um).
 
-Uma seguradora pode ter qualquer combinação dessas três detecções — Suhai só
-tem `detectar_pdf`; Bradesco Saúde tem `detectar_pdf` e `detectar_xls`; Porto
-Seguro tem `detectar_pdf` e `detectar_html` — em todos os casos, qualquer um
-dos arquivos aceitos sozinho já é suficiente.
+Uma seguradora pode ter qualquer combinação dessas detecções — Suhai só tem
+`detectar_pdf`; Bradesco Saúde tem `detectar_pdf` e `detectar_xls`; Porto
+Seguro tem `detectar_pdf` e `detectar_html`; Hapvida tem `detectar_csv` — em
+todos os casos, qualquer um dos arquivos aceitos sozinho já é suficiente.
 
 Para adicionar uma nova seguradora: criar `parsers/<nome>.py` com essas
 funções, validar contra documento(s) real(is), e registrar aqui.
@@ -21,7 +23,7 @@ funções, validar contra documento(s) real(is), e registrar aqui.
 
 import pandas as pd
 
-from parsers import bradesco_saude, porto_seguro, suhai
+from parsers import bradesco_saude, hapvida, porto_seguro, suhai
 from parsers.base import LinhaComissao, LoteComissao, extrair_texto_pdf
 
 PARSERS = {
@@ -39,6 +41,10 @@ PARSERS = {
         "detectar_html": porto_seguro.detectar_html,
         "parse": porto_seguro.parse,
     },
+    "Hapvida": {
+        "detectar_csv": hapvida.detectar_csv,
+        "parse": hapvida.parse,
+    },
 }
 
 
@@ -51,17 +57,26 @@ def _conteudo_html(caminho: str) -> str:
         return f.read()
 
 
+def _colunas_csv(caminho: str) -> list[str]:
+    import csv
+
+    with open(caminho, encoding="cp1252") as f:
+        return [h.strip() for h in next(csv.reader(f, delimiter=";"))]
+
+
 def identificar_seguradora(caminhos: list[str]) -> str | None:
     """Devolve o nome da seguradora cujo layout bate com os arquivos
-    enviados (PDF e/ou planilha e/ou HTML), ou None se nenhuma (ou mais de
-    uma) bater."""
+    enviados (PDF e/ou planilha e/ou HTML e/ou CSV), ou None se nenhuma (ou
+    mais de uma) bater."""
     caminho_pdf = next((c for c in caminhos if c.lower().endswith(".pdf")), None)
     caminho_xls = next((c for c in caminhos if c.lower().endswith((".xls", ".xlsx"))), None)
     caminho_html = next((c for c in caminhos if c.lower().endswith((".html", ".htm", ".do"))), None)
+    caminho_csv = next((c for c in caminhos if c.lower().endswith(".csv")), None)
 
     texto_pdf = extrair_texto_pdf(caminho_pdf) if caminho_pdf else None
     colunas_xls = _colunas_xlsx(caminho_xls) if caminho_xls else None
     conteudo_html = _conteudo_html(caminho_html) if caminho_html else None
+    colunas_csv = _colunas_csv(caminho_csv) if caminho_csv else None
 
     candidatos = set()
     for nome, info in PARSERS.items():
@@ -70,6 +85,8 @@ def identificar_seguradora(caminhos: list[str]) -> str | None:
         if colunas_xls is not None and info.get("detectar_xls") and info["detectar_xls"](colunas_xls):
             candidatos.add(nome)
         if conteudo_html is not None and info.get("detectar_html") and info["detectar_html"](conteudo_html):
+            candidatos.add(nome)
+        if colunas_csv is not None and info.get("detectar_csv") and info["detectar_csv"](colunas_csv):
             candidatos.add(nome)
 
     return next(iter(candidatos)) if len(candidatos) == 1 else None

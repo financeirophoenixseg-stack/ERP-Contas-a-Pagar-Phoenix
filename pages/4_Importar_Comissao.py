@@ -69,10 +69,15 @@ col1, col2, col3 = st.columns(3)
 col1.metric("Data de pagamento", lote.data_pagamento or "?")
 col2.metric("Valor bruto (tributário)", f"R$ {lote.valor_bruto:,.2f}")
 col3.metric("Valor líquido", f"R$ {lote.valor_liquido:,.2f}")
-identificador = f"CNPJ: {lote.cnpj}" if lote.cnpj else f"SUSEP: {lote.susep}" if lote.susep else ""
+identificador = (
+    f"CNPJ: {lote.cnpj}" if lote.cnpj
+    else f"SUSEP: {lote.susep}" if lote.susep
+    else f"Código comissionado: {lote.codigo_comissionado}" if lote.codigo_comissionado
+    else ""
+)
 st.caption(f"Corretor: {lote.corretor} — {identificador}")
 
-empresas = client.table("empresas").select("id, nome, cnpj, susep").execute().data or []
+empresas = client.table("empresas").select("id, nome, cnpj, susep, codigo_comissionado").execute().data or []
 empresa_por_cnpj = {e["cnpj"]: e for e in empresas if e.get("cnpj")}
 empresa_resolvida = empresa_por_cnpj.get(lote.cnpj) if lote.cnpj else None
 identificado_por = "CNPJ"
@@ -81,6 +86,11 @@ if not empresa_resolvida and lote.susep:
     empresa_por_susep = {e["susep"]: e for e in empresas if e.get("susep")}
     empresa_resolvida = empresa_por_susep.get(lote.susep)
     identificado_por = "SUSEP"
+
+if not empresa_resolvida and lote.codigo_comissionado:
+    empresa_por_codigo = {e["codigo_comissionado"]: e for e in empresas if e.get("codigo_comissionado")}
+    empresa_resolvida = empresa_por_codigo.get(lote.codigo_comissionado)
+    identificado_por = "código comissionado"
 
 if not empresa_resolvida and lote.conta:
     # sem CNPJ (ex.: só a planilha foi enviada) — tenta pela conta bancária,
@@ -105,6 +115,7 @@ else:
     motivo = (
         f"CNPJ '{lote.cnpj}'" if lote.cnpj
         else f"SUSEP '{lote.susep}'" if lote.susep
+        else f"código comissionado '{lote.codigo_comissionado}'" if lote.codigo_comissionado
         else f"conta '{lote.conta}'" if lote.conta
         else "nenhum dado"
     )
@@ -112,7 +123,7 @@ else:
         f"{motivo} não está vinculado a nenhuma empresa cadastrada. Selecione manualmente:"
     )
     if not empresas:
-        st.error("Cadastre ao menos uma empresa em **Empresas** antes de importar.")
+        st.error("Cadastre ao menos uma empresa em **Configurações** antes de importar.")
         st.stop()
     nomes_por_id = {e["id"]: e["nome"] for e in empresas}
     empresa_id = st.selectbox("Empresa responsável", options=list(nomes_por_id.keys()), format_func=lambda i: nomes_por_id[i])
@@ -132,6 +143,14 @@ else:
             st.info("SUSEP salvo.")
         except Exception as e:
             st.error(f"Erro ao salvar SUSEP: {e}")
+    if lote.codigo_comissionado and st.checkbox(
+        f"Salvar código comissionado {lote.codigo_comissionado} para esta empresa (próximas importações serão automáticas)"
+    ):
+        try:
+            client.table("empresas").update({"codigo_comissionado": lote.codigo_comissionado}).eq("id", empresa_id).execute()
+            st.info("Código comissionado salvo.")
+        except Exception as e:
+            st.error(f"Erro ao salvar código comissionado: {e}")
 
 st.divider()
 st.subheader(f"{len(lote.linhas)} movimentações de comissão")
@@ -376,7 +395,10 @@ if st.button("Confirmar importação", type="primary"):
                 cliente_id = resolver_cliente_por_apolice(linha.apolice, clientes_existentes)
 
             regra = regras_por_cliente.get(cliente_id)
-            categoria = classificar(linha.parcela, regra)
+            # se a própria seguradora já diz a categoria (ex.: Hapvida marca
+            # repique/reagenciamento por linha), isso tem prioridade sobre a
+            # classificação genérica por regra de cliente.
+            categoria = linha.categoria_sugerida or classificar(linha.parcela, regra)
 
             client.table("movimentacoes_comissao").insert(
                 {

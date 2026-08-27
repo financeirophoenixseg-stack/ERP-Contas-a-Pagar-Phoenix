@@ -21,7 +21,7 @@ except RuntimeError as e:
 
 empresas = client.table("empresas").select("id, nome").order("nome").execute().data or []
 if not empresas:
-    st.error("Cadastre ao menos uma empresa em **Empresas** antes de continuar.")
+    st.error("Cadastre ao menos uma empresa em **Configurações** antes de continuar.")
     st.stop()
 empresas_por_id = {e["id"]: e["nome"] for e in empresas}
 

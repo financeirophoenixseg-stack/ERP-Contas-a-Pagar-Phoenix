@@ -81,7 +81,7 @@ if sem_conta_cadastrada:
     st.warning(
         "Contas não cadastradas encontradas no arquivo: "
         + ", ".join(f"{b}/{ag}/{c}" for b, ag, c in sem_conta_cadastrada)
-        + ". Cadastre-as em **Contas Bancárias** antes de importar, para que a empresa "
+        + ". Cadastre-as em **Configurações** antes de importar, para que a empresa "
         "seja identificada automaticamente."
     )
 

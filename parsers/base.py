@@ -27,6 +27,10 @@ class LinhaComissao:
     tipo: str  # 'pagamento' | 'adiantamento' | 'cancelamento' | 'recuperacao' | 'ajuste'
     valor_parcela: float
     valor_comissao: float
+    # Preenchido quando a própria seguradora já informa a categoria (ex.:
+    # Hapvida marca repique/reagenciamento por linha) — quando presente, tem
+    # prioridade sobre a classificação genérica por regra de cliente.
+    categoria_sugerida: str | None = None
 
 
 @dataclass
@@ -50,3 +54,6 @@ class LoteComissao:
     # Idem para seguradoras que identificam o corretor por código SUSEP em
     # vez de CNPJ (ex.: Porto Seguro).
     susep: str = ""
+    # Idem para seguradoras que identificam por um código próprio de
+    # comissionado/concessionária (ex.: Hapvida, "08LH").
+    codigo_comissionado: str = ""

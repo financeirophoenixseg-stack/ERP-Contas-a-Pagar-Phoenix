@@ -6,6 +6,7 @@ create table empresas (
     nome text not null unique,          -- 'Phoenix', 'Vizentim', ...
     cnpj text unique,                    -- CNPJ do corretor, usado para reconhecer a empresa em demonstrativos de comissão
     susep text unique,                   -- código SUSEP do corretor, idem para seguradoras que identificam por SUSEP (ex.: Porto Seguro)
+    codigo_comissionado text unique,     -- código de comissionado/concessionária (ex.: Hapvida, '08LH')
     created_at timestamptz not null default now()
 );
 
