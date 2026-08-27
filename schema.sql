@@ -196,6 +196,21 @@ create table lancamentos_previstos (
     created_at timestamptz not null default now()
 );
 
+-- Anexos: boletos e comprovantes guardados no Supabase Storage (bucket
+-- "anexos"), ligados a um lançamento previsto e/ou a uma transação OFX.
+create table anexos (
+    id uuid primary key default gen_random_uuid(),
+    lancamento_previsto_id uuid references lancamentos_previstos(id),
+    ofx_transacao_id uuid references ofx_transacoes(id),
+    tipo text not null,          -- 'boleto' | 'comprovante' | 'outro'
+    nome_arquivo text not null,
+    storage_path text not null,  -- caminho dentro do bucket "anexos"
+    created_at timestamptz not null default now()
+);
+
+create index on anexos (lancamento_previsto_id);
+create index on anexos (ofx_transacao_id);
+
 create index on lancamentos_previstos (empresa_id, status, data_vencimento);
 create index on lancamentos_previstos (tipo, status);
 create index on lancamentos_previstos (grupo_id);
@@ -223,3 +238,4 @@ alter table regras_identificacao disable row level security;
 alter table lancamentos_previstos disable row level security;
 alter table regras_classificacao_comissao disable row level security;
 alter table regras_parcelamento disable row level security;
+alter table anexos disable row level security;
