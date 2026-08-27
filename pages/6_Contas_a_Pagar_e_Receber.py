@@ -3,8 +3,12 @@ from datetime import date
 
 import streamlit as st
 
+import leitor_boleto
+import sharepoint
 from db import get_client
 from lancamentos import ParcelaGerada, gerar_parcelas, gerar_recorrencia
+
+BUCKET_ANEXOS = "anexos"
 
 st.set_page_config(page_title="Contas a Pagar e Receber", layout="wide")
 st.title("Contas a Pagar e Receber")
@@ -31,7 +35,138 @@ contas_plano = client.table("plano_contas").select("id, codigo, nome").order("co
 contas_bancarias = (
     client.table("contas_bancarias").select("id, banco, agencia, conta").order("conta").execute().data or []
 )
+nomes_fornecedor_todos = {f["id"]: f["nome"] for f in fornecedores}
 
+st.subheader("📄 Ler boleto/guia automaticamente (via IA)")
+if not leitor_boleto.esta_configurado():
+    st.caption(
+        "Configure `ANTHROPIC_API_KEY` no arquivo `.env` para habilitar a leitura automática de boletos. "
+        "Enquanto isso, use o cadastro manual abaixo."
+    )
+else:
+    boleto_pdf = st.file_uploader("Suba o PDF do boleto/guia", type=["pdf"], key="upload_boleto_ia")
+    if boleto_pdf is not None and st.button("Ler boleto com IA"):
+        with st.spinner("Lendo o boleto..."):
+            try:
+                dados_lidos = leitor_boleto.ler_boleto(boleto_pdf.getvalue())
+                st.session_state["boleto_lido"] = dados_lidos
+                st.session_state["boleto_lido_arquivo"] = {
+                    "nome": boleto_pdf.name,
+                    "conteudo": boleto_pdf.getvalue(),
+                    "tipo": boleto_pdf.type,
+                }
+            except Exception as e:
+                st.error(f"Não deu pra ler automaticamente este boleto: {e}")
+
+    if st.session_state.get("boleto_lido"):
+        dados = st.session_state["boleto_lido"]
+        aviso = f"Confiança da leitura: **{dados.confianca}**"
+        if dados.observacoes:
+            aviso += f" — {dados.observacoes}"
+        st.info(aviso)
+        st.caption("Confira e corrija os dados abaixo antes de confirmar — nada é lançado sem sua confirmação.")
+
+        c1, c2 = st.columns(2)
+        valor_confirmado = c1.number_input(
+            "Valor (R$)", min_value=0.0, step=0.01, format="%.2f", value=float(dados.valor or 0), key="valor_boleto_ia"
+        )
+        try:
+            venc_padrao = date.fromisoformat(dados.data_vencimento) if dados.data_vencimento else date.today()
+        except ValueError:
+            venc_padrao = date.today()
+        vencimento_confirmado = c2.date_input("Vencimento", value=venc_padrao, key="vencimento_boleto_ia")
+        descricao_confirmada = st.text_input("Descrição", value=dados.descricao or "", key="descricao_boleto_ia")
+        empresa_boleto_id = st.selectbox(
+            "Empresa", options=list(empresas_por_id.keys()), format_func=lambda i: empresas_por_id[i], key="empresa_boleto_ia"
+        )
+
+        sugestao_fornecedor_id = None
+        if dados.favorecido:
+            alvo = dados.favorecido.lower()
+            for fid, nome in nomes_fornecedor_todos.items():
+                if nome.lower() in alvo or alvo in nome.lower():
+                    sugestao_fornecedor_id = fid
+                    break
+        opcoes_fornecedor_boleto = ["(nenhum)", "+ Novo fornecedor"] + list(nomes_fornecedor_todos.keys())
+        index_padrao = (
+            opcoes_fornecedor_boleto.index(sugestao_fornecedor_id) if sugestao_fornecedor_id else 0
+        )
+        fornecedor_escolhido_boleto = st.selectbox(
+            "Fornecedor",
+            options=opcoes_fornecedor_boleto,
+            index=index_padrao,
+            format_func=lambda i: i if i in ("(nenhum)", "+ Novo fornecedor") else nomes_fornecedor_todos.get(i, i),
+            key="fornecedor_boleto_ia",
+        )
+        novo_fornecedor_nome_boleto = None
+        if fornecedor_escolhido_boleto == "+ Novo fornecedor":
+            novo_fornecedor_nome_boleto = st.text_input(
+                "Nome do novo fornecedor", value=dados.favorecido or "", key="novo_fornecedor_boleto_ia"
+            )
+
+        col_confirmar, col_descartar = st.columns(2)
+        if col_confirmar.button("Cadastrar lançamento com estes dados", type="primary", key="confirmar_boleto_ia"):
+            fornecedor_id_boleto = None
+            if fornecedor_escolhido_boleto == "+ Novo fornecedor" and novo_fornecedor_nome_boleto and novo_fornecedor_nome_boleto.strip():
+                fornecedor_id_boleto = (
+                    client.table("fornecedores").insert({"nome": novo_fornecedor_nome_boleto.strip()}).execute().data[0]["id"]
+                )
+            elif fornecedor_escolhido_boleto not in ("(nenhum)", "+ Novo fornecedor"):
+                fornecedor_id_boleto = fornecedor_escolhido_boleto
+
+            criado = (
+                client.table("lancamentos_previstos")
+                .insert(
+                    {
+                        "empresa_id": empresa_boleto_id,
+                        "tipo": "pagar",
+                        "descricao": descricao_confirmada.strip() or "Boleto",
+                        "valor": valor_confirmado,
+                        "data_vencimento": vencimento_confirmado.isoformat(),
+                        "status": "previsto",
+                        "fornecedor_id": fornecedor_id_boleto,
+                        "grupo_id": str(uuid.uuid4()),
+                    }
+                )
+                .execute()
+            )
+            lancamento_id_boleto = criado.data[0]["id"]
+
+            arquivo_info = st.session_state["boleto_lido_arquivo"]
+            hoje = date.today()
+            nome_seguro = f"{uuid.uuid4().hex}_{arquivo_info['nome']}"
+            caminho_storage = f"{hoje.year}/{hoje.month:02d}/boleto/{nome_seguro}"
+            try:
+                client.storage.from_(BUCKET_ANEXOS).upload(
+                    caminho_storage, arquivo_info["conteudo"], {"content-type": arquivo_info["tipo"] or "application/pdf"}
+                )
+                client.table("anexos").insert(
+                    {
+                        "lancamento_previsto_id": lancamento_id_boleto,
+                        "tipo": "boleto",
+                        "nome_arquivo": arquivo_info["nome"],
+                        "storage_path": caminho_storage,
+                    }
+                ).execute()
+                if sharepoint.esta_configurado():
+                    try:
+                        sharepoint.enviar_arquivo(caminho_storage, arquivo_info["conteudo"])
+                    except Exception as e:
+                        st.warning(f"Anexo salvo, mas a cópia para o SharePoint falhou: {e}")
+            except Exception as e:
+                st.error(f"Lançamento criado, mas houve erro ao salvar o anexo: {e}")
+
+            del st.session_state["boleto_lido"]
+            del st.session_state["boleto_lido_arquivo"]
+            st.success("Lançamento criado a partir do boleto, com o anexo já vinculado.")
+            st.rerun()
+
+        if col_descartar.button("Descartar leitura", key="descartar_boleto_ia"):
+            del st.session_state["boleto_lido"]
+            del st.session_state["boleto_lido_arquivo"]
+            st.rerun()
+
+st.divider()
 st.subheader("Novo lançamento")
 tipo_label = st.radio("Tipo", ["Pagar (despesa)", "Receber (receita)"], horizontal=True)
 tipo = "pagar" if tipo_label.startswith("Pagar") else "receber"
@@ -107,6 +242,12 @@ if parcelas_preview:
         hide_index=True,
     )
 
+arquivo_anexo = st.file_uploader(
+    "Anexar boleto/comprovante (opcional)",
+    key="anexo_novo_lancamento",
+    help="Fica salvo já vinculado ao lançamento (na 1ª parcela, se for parcelado/fixo).",
+)
+
 if st.button("Cadastrar", type="primary", disabled=not parcelas_preview or not descricao.strip()):
     cliente_id = fornecedor_id = None
     if escolha_terceiro == "+ Novo fornecedor" and novo_terceiro_nome and novo_terceiro_nome.strip():
@@ -120,8 +261,9 @@ if st.button("Cadastrar", type="primary", disabled=not parcelas_preview or not d
             cliente_id = escolha_terceiro
 
     grupo_id = str(uuid.uuid4())
+    primeiro_id = None
     for p in parcelas_preview:
-        client.table("lancamentos_previstos").insert(
+        criado = client.table("lancamentos_previstos").insert(
             {
                 "empresa_id": empresa_id,
                 "tipo": tipo,
@@ -139,9 +281,104 @@ if st.button("Cadastrar", type="primary", disabled=not parcelas_preview or not d
                 "recorrente": p.recorrente,
             }
         ).execute()
+        if primeiro_id is None:
+            primeiro_id = criado.data[0]["id"]
     st.success(f"{len(parcelas_preview)} lançamento(s) cadastrado(s).")
 
+    if arquivo_anexo is not None and primeiro_id is not None:
+        hoje = date.today()
+        nome_seguro = f"{uuid.uuid4().hex}_{arquivo_anexo.name}"
+        caminho_storage = f"{hoje.year}/{hoje.month:02d}/boleto/{nome_seguro}"
+        try:
+            client.storage.from_(BUCKET_ANEXOS).upload(
+                caminho_storage,
+                arquivo_anexo.getvalue(),
+                {"content-type": arquivo_anexo.type or "application/octet-stream"},
+            )
+            client.table("anexos").insert(
+                {
+                    "lancamento_previsto_id": primeiro_id,
+                    "tipo": "boleto",
+                    "nome_arquivo": arquivo_anexo.name,
+                    "storage_path": caminho_storage,
+                }
+            ).execute()
+            st.success(f"Anexo '{arquivo_anexo.name}' vinculado ao lançamento.")
+            if sharepoint.esta_configurado():
+                try:
+                    sharepoint.enviar_arquivo(caminho_storage, arquivo_anexo.getvalue())
+                except Exception as e:
+                    st.warning(f"Anexo salvo, mas a cópia para o SharePoint falhou: {e}")
+        except Exception as e:
+            st.error(f"Lançamento criado, mas houve erro ao salvar o anexo: {e}")
+
 st.divider()
+
+
+def _secao_anexos(lancamento_id: str, key_prefix: str):
+    anexos = (
+        client.table("anexos")
+        .select("id, tipo, nome_arquivo, storage_path, created_at")
+        .eq("lancamento_previsto_id", lancamento_id)
+        .order("created_at", desc=True)
+        .execute()
+        .data
+        or []
+    )
+    if anexos:
+        for a in anexos:
+            col_nome, col_baixar, col_apagar = st.columns([4, 1, 1])
+            col_nome.write(f"📎 {a['tipo']} — {a['nome_arquivo']}")
+            try:
+                conteudo = client.storage.from_(BUCKET_ANEXOS).download(a["storage_path"])
+                col_baixar.download_button(
+                    "Baixar", data=conteudo, file_name=a["nome_arquivo"], key=f"{key_prefix}_baixar_{a['id']}"
+                )
+            except Exception as e:
+                col_baixar.error("erro")
+            if col_apagar.button("Apagar", key=f"{key_prefix}_apagar_{a['id']}"):
+                client.storage.from_(BUCKET_ANEXOS).remove([a["storage_path"]])
+                client.table("anexos").delete().eq("id", a["id"]).execute()
+                if sharepoint.esta_configurado():
+                    try:
+                        sharepoint.remover_arquivo(a["storage_path"])
+                    except Exception as e:
+                        st.warning(f"Não foi possível remover a cópia no SharePoint: {e}")
+                st.success("Anexo apagado.")
+                st.rerun()
+    else:
+        st.caption("Nenhum anexo neste lançamento ainda.")
+
+    col_tipo, col_arquivo = st.columns([1, 3])
+    tipo_novo_anexo = col_tipo.radio(
+        "Tipo", ["Boleto", "Comprovante", "Outro"], horizontal=False, key=f"{key_prefix}_tipo"
+    )
+    novo_arquivo = col_arquivo.file_uploader("Novo anexo", key=f"{key_prefix}_upload")
+    if novo_arquivo is not None and st.button("Salvar anexo", key=f"{key_prefix}_salvar"):
+        hoje = date.today()
+        nome_seguro = f"{uuid.uuid4().hex}_{novo_arquivo.name}"
+        caminho_storage = f"{hoje.year}/{hoje.month:02d}/{tipo_novo_anexo.lower()}/{nome_seguro}"
+        try:
+            client.storage.from_(BUCKET_ANEXOS).upload(
+                caminho_storage, novo_arquivo.getvalue(), {"content-type": novo_arquivo.type or "application/octet-stream"}
+            )
+            client.table("anexos").insert(
+                {
+                    "lancamento_previsto_id": lancamento_id,
+                    "tipo": tipo_novo_anexo.lower(),
+                    "nome_arquivo": novo_arquivo.name,
+                    "storage_path": caminho_storage,
+                }
+            ).execute()
+            st.success(f"Anexo '{novo_arquivo.name}' salvo.")
+            if sharepoint.esta_configurado():
+                try:
+                    sharepoint.enviar_arquivo(caminho_storage, novo_arquivo.getvalue())
+                except Exception as e:
+                    st.warning(f"Anexo salvo, mas a cópia para o SharePoint falhou: {e}")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Erro ao salvar anexo: {e}")
 
 
 def _tabela(tipo_filtro: str, titulo: str):
@@ -194,7 +431,47 @@ def _tabela(tipo_filtro: str, titulo: str):
             st.success("Cancelado.")
             st.rerun()
 
+    opcoes_anexo = {i["id"]: f"{i['data_vencimento']} — {i['descricao']} — R$ {i['valor']:.2f} ({i['status']})" for i in itens}
+    lancamento_anexo_id = st.selectbox(
+        "Anexos de:", options=list(opcoes_anexo.keys()), format_func=lambda i: opcoes_anexo[i], key=f"sel_anexo_{tipo_filtro}"
+    )
+    with st.expander("📎 Boletos e comprovantes deste lançamento"):
+        _secao_anexos(lancamento_anexo_id, key_prefix=f"anexo_{tipo_filtro}_{lancamento_anexo_id}")
+
 
 _tabela("pagar", "Contas a Pagar")
 st.divider()
 _tabela("receber", "Contas a Receber")
+
+st.divider()
+st.subheader("Todos os anexos")
+filtro_tipo_global = st.selectbox("Filtrar por tipo", options=["Todos", "Boleto", "Comprovante", "Outro"], key="filtro_tipo_global")
+query_global = client.table("anexos").select(
+    "id, tipo, nome_arquivo, storage_path, created_at, lancamentos_previstos(descricao, data_vencimento)"
+)
+if filtro_tipo_global != "Todos":
+    query_global = query_global.eq("tipo", filtro_tipo_global.lower())
+anexos_globais = query_global.order("created_at", desc=True).limit(200).execute().data or []
+
+if not anexos_globais:
+    st.info("Nenhum anexo guardado ainda.")
+else:
+    for a in anexos_globais:
+        vinculo = a.get("lancamentos_previstos")
+        rotulo = f"{vinculo['descricao']} ({vinculo['data_vencimento']})" if vinculo else "sem vínculo a nenhum lançamento"
+        with st.expander(f"📎 {a['created_at'][:10]} — {a['tipo']} — {a['nome_arquivo']} — {rotulo}"):
+            try:
+                conteudo = client.storage.from_(BUCKET_ANEXOS).download(a["storage_path"])
+                st.download_button("Baixar", data=conteudo, file_name=a["nome_arquivo"], key=f"global_baixar_{a['id']}")
+            except Exception as e:
+                st.error(f"Erro ao carregar arquivo: {e}")
+            if st.button("Apagar", key=f"global_apagar_{a['id']}"):
+                client.storage.from_(BUCKET_ANEXOS).remove([a["storage_path"]])
+                client.table("anexos").delete().eq("id", a["id"]).execute()
+                if sharepoint.esta_configurado():
+                    try:
+                        sharepoint.remover_arquivo(a["storage_path"])
+                    except Exception as e:
+                        st.warning(f"Não foi possível remover a cópia no SharePoint: {e}")
+                st.success("Anexo apagado.")
+                st.rerun()
