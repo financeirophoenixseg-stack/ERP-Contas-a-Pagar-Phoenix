@@ -153,13 +153,21 @@ for txn in pendentes:
             ).eq("id", txn["id"]).execute()
 
             if padrao.strip():
-                client.table("regras_identificacao").insert(
-                    {
-                        "padrao_descricao": padrao.strip(),
-                        "cliente_id": cliente_id,
-                        "fornecedor_id": fornecedor_id,
-                        "plano_conta_id": plano_conta_id,
-                    }
-                ).execute()
+                ja_existe = (
+                    client.table("regras_identificacao")
+                    .select("id")
+                    .ilike("padrao_descricao", padrao.strip())
+                    .execute()
+                    .data
+                )
+                if not ja_existe:
+                    client.table("regras_identificacao").insert(
+                        {
+                            "padrao_descricao": padrao.strip(),
+                            "cliente_id": cliente_id,
+                            "fornecedor_id": fornecedor_id,
+                            "plano_conta_id": plano_conta_id,
+                        }
+                    ).execute()
 
             st.success("Classificado! Atualize a página para ver a próxima lista.")
