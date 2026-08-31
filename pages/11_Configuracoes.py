@@ -1,5 +1,7 @@
 import streamlit as st
+import streamlit.components.v1 as components
 
+import pluggy_integration
 from db import get_client
 
 st.set_page_config(page_title="Configurações", layout="wide")
@@ -15,6 +17,7 @@ except RuntimeError as e:
 (
     aba_empresas,
     aba_contas_bancarias,
+    aba_integracao_bancaria,
     aba_clientes,
     aba_fornecedores,
     aba_plano_contas,
@@ -25,6 +28,7 @@ except RuntimeError as e:
     [
         "Empresas",
         "Contas Bancárias",
+        "Integração Bancária",
         "Clientes",
         "Fornecedores",
         "Plano de Contas",
@@ -118,6 +122,108 @@ with aba_contas_bancarias:
         )
     else:
         st.info("Nenhuma conta cadastrada ainda.")
+
+with aba_integracao_bancaria:
+    st.subheader("Integração bancária (Open Finance, via Pluggy)")
+    st.caption(
+        "Conecta direto com o banco pra puxar o extrato automaticamente, sem precisar exportar/importar OFX "
+        "manualmente. Usa a Pluggy como agregadora certificada de Open Finance — sua senha do banco nunca passa "
+        "pelo nosso sistema, o login acontece dentro da tela oficial de consentimento do próprio banco."
+    )
+
+    if not pluggy_integration.esta_configurado():
+        st.info(
+            "**Ainda não configurado.** Pra ativar:\n\n"
+            "1. Crie uma conta em [pluggy.ai](https://pluggy.ai) (tem plano gratuito pra poucas conexões).\n"
+            "2. No painel da Pluggy, gere um **Client ID** e **Client Secret**.\n"
+            "3. Adicione no arquivo `.env` do sistema:\n"
+            "```\nPLUGGY_CLIENT_ID=...\nPLUGGY_CLIENT_SECRET=...\n```\n"
+            "4. Reinicie o sistema (fechar e abrir `abrir.bat`) — essa tela libera sozinha."
+        )
+    else:
+        st.warning(
+            "⚠️ A conexão em si (o widget de escolher o banco e fazer login) ainda não foi testada contra uma "
+            "conta real da Pluggy — o botão abaixo já gera o token certo, mas o encaixe final "
+            "(salvar a conexão depois que você loga no banco) precisa ser conferido na primeira vez que usar."
+        )
+        contas_bancarias_todas = (
+            client.table("contas_bancarias")
+            .select("id, banco, agencia, conta, empresas(nome)")
+            .order("banco")
+            .execute()
+            .data
+            or []
+        )
+        integracoes = client.table("integracoes_bancarias").select("*").execute().data or []
+        por_conta = {i["conta_bancaria_id"]: i for i in integracoes}
+
+        if not contas_bancarias_todas:
+            st.info("Cadastre uma conta bancária primeiro (aba **Contas Bancárias**).")
+        else:
+            for c in contas_bancarias_todas:
+                integracao = por_conta.get(c["id"])
+                rotulo = f"{(c.get('empresas') or {}).get('nome', '?')} — {c['banco']}/{c['agencia']}/{c['conta']}"
+                status = integracao["status"] if integracao else "não conectada"
+                with st.expander(f"🏦 {rotulo} — {status}"):
+                    if integracao:
+                        st.write(f"**Status:** {integracao['status']}")
+                        st.write(f"**Última sincronização:** {integracao['ultima_sincronizacao'] or 'nunca'}")
+                        if st.button("Desconectar", key=f"desconectar_{c['id']}"):
+                            client.table("integracoes_bancarias").delete().eq("id", integracao["id"]).execute()
+                            st.success("Desconectado.")
+                            st.rerun()
+                    else:
+                        if st.button("Conectar", key=f"conectar_{c['id']}"):
+                            try:
+                                st.session_state[f"connect_token_{c['id']}"] = pluggy_integration.criar_connect_token()
+                            except Exception as e:
+                                st.error(f"Erro ao gerar conexão: {e}")
+
+                        token = st.session_state.get(f"connect_token_{c['id']}")
+                        if token:
+                            components.html(
+                                f"""
+                                <div id="pluggy-connect-{c['id']}"></div>
+                                <script src="https://cdn.pluggy.ai/pluggy-connect/v3/pluggy-connect.js"></script>
+                                <script>
+                                  const connect = new PluggyConnect({{
+                                    connectToken: "{token}",
+                                    includeSandbox: false,
+                                    onSuccess: (data) => {{
+                                      document.getElementById('pluggy-connect-{c['id']}').innerText =
+                                        'Conectado! Copie este código e cole no campo abaixo: ' + data.item.id;
+                                    }},
+                                    onError: (error) => {{
+                                      document.getElementById('pluggy-connect-{c['id']}').innerText =
+                                        'Erro: ' + JSON.stringify(error);
+                                    }},
+                                  }});
+                                  connect.init();
+                                </script>
+                                """,
+                                height=600,
+                            )
+                            item_id_colado = st.text_input(
+                                "Depois de conectar, cole aqui o código (item id) que apareceu:",
+                                key=f"item_id_{c['id']}",
+                            )
+                            if item_id_colado.strip() and st.button("Salvar conexão", key=f"salvar_conexao_{c['id']}"):
+                                try:
+                                    contas_pluggy = pluggy_integration.listar_contas(item_id_colado.strip())
+                                except Exception as e:
+                                    st.error(f"Não deu pra confirmar a conexão: {e}")
+                                else:
+                                    client.table("integracoes_bancarias").insert(
+                                        {
+                                            "conta_bancaria_id": c["id"],
+                                            "pluggy_item_id": item_id_colado.strip(),
+                                            "pluggy_account_id": contas_pluggy[0].id if len(contas_pluggy) == 1 else None,
+                                            "status": "ativo",
+                                        }
+                                    ).execute()
+                                    st.success("Conexão salva.")
+                                    del st.session_state[f"connect_token_{c['id']}"]
+                                    st.rerun()
 
 with aba_clientes:
     st.subheader("Novo cliente")
