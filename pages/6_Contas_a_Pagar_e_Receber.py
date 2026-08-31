@@ -237,7 +237,7 @@ with st.expander("📎 Enviar vários comprovantes de uma vez (IA vincula e dá 
             "Cada comprovante é lido pela IA e casado com um lançamento previsto (por valor + proximidade de data). "
             "Quando o casamento é certo (exatamente um candidato), o anexo é vinculado e o lançamento marcado como "
             "pago automaticamente. Quando fica ambíguo ou a leitura não é confiável, o comprovante é salvo sem "
-            "vínculo, para você resolver manualmente em **Todos os anexos**."
+            "vínculo — resolva manualmente na lista abaixo."
         )
         comprovantes = st.file_uploader(
             "Suba um ou vários PDFs de comprovante",
@@ -315,6 +315,73 @@ with st.expander("📎 Enviar vários comprovantes de uma vez (IA vincula e dá 
 
             st.dataframe(resultados, use_container_width=True, hide_index=True)
             st.success(f"{len(comprovantes)} comprovante(s) processado(s).")
+
+    orfaos = (
+        client.table("anexos")
+        .select("id, tipo, nome_arquivo, storage_path, created_at")
+        .is_("lancamento_previsto_id", "null")
+        .order("created_at", desc=True)
+        .limit(50)
+        .execute()
+        .data
+        or []
+    )
+    if orfaos:
+        st.divider()
+        st.caption(f"⚠️ {len(orfaos)} anexo(s) sem vínculo — resolva manualmente:")
+        lancamentos_para_vincular = (
+            client.table("lancamentos_previstos")
+            .select("id, descricao, valor, data_vencimento, status")
+            .order("data_vencimento", desc=True)
+            .limit(300)
+            .execute()
+            .data
+            or []
+        )
+        opcoes_vincular = {
+            l["id"]: f"{data_br(l['data_vencimento'])} — {l['descricao']} — {moeda(l['valor'])} ({l['status']})"
+            for l in lancamentos_para_vincular
+        }
+        for a in orfaos:
+            with st.expander(f"📎 {data_br(a['created_at'])} — {a['tipo']} — {a['nome_arquivo']}"):
+                try:
+                    conteudo = client.storage.from_(BUCKET_ANEXOS).download(a["storage_path"])
+                    st.download_button(
+                        "Baixar", data=conteudo, file_name=a["nome_arquivo"], key=f"orfao_baixar_{a['id']}"
+                    )
+                except Exception as e:
+                    st.error(f"Erro ao carregar arquivo: {e}")
+
+                if opcoes_vincular:
+                    col_sel, col_pago, col_btn = st.columns([3, 1, 1])
+                    lancamento_escolhido = col_sel.selectbox(
+                        "Vincular a",
+                        options=list(opcoes_vincular.keys()),
+                        format_func=lambda i: opcoes_vincular[i],
+                        key=f"orfao_sel_{a['id']}",
+                    )
+                    marcar_pago = col_pago.checkbox("Marcar pago", value=True, key=f"orfao_pago_{a['id']}")
+                    if col_btn.button("Vincular", key=f"orfao_btn_{a['id']}"):
+                        client.table("anexos").update({"lancamento_previsto_id": lancamento_escolhido}).eq(
+                            "id", a["id"]
+                        ).execute()
+                        if marcar_pago:
+                            client.table("lancamentos_previstos").update(
+                                {"status": "pago", "data_pagamento": date.today().isoformat()}
+                            ).eq("id", lancamento_escolhido).execute()
+                        st.success("Anexo vinculado.")
+                        st.rerun()
+
+                if st.button("Apagar", key=f"orfao_apagar_{a['id']}"):
+                    client.storage.from_(BUCKET_ANEXOS).remove([a["storage_path"]])
+                    client.table("anexos").delete().eq("id", a["id"]).execute()
+                    if sharepoint.esta_configurado():
+                        try:
+                            sharepoint.remover_arquivo(a["storage_path"])
+                        except Exception as e:
+                            st.warning(f"Não foi possível remover a cópia no SharePoint: {e}")
+                    st.success("Anexo apagado.")
+                    st.rerun()
 
 st.divider()
 st.subheader("Novo lançamento")
@@ -684,79 +751,12 @@ else:
             st.success("Cancelado.")
             st.rerun()
 
-    opcoes_anexo = {
-        i["id"]: f"{data_br(i['data_vencimento'])} — {i['descricao']} — {moeda(i['valor'])} ({i['status']})"
-        for i in itens
-    }
-    lancamento_anexo_id = st.selectbox(
-        "Anexos de:", options=list(opcoes_anexo.keys()), format_func=lambda i: opcoes_anexo[i], key="extrato_sel_anexo"
-    )
-    with st.expander("📎 Boletos e comprovantes deste lançamento"):
-        _secao_anexos(lancamento_anexo_id, key_prefix=f"extrato_anexo_{lancamento_anexo_id}")
-
-st.divider()
-st.subheader("Todos os anexos")
-filtro_tipo_global = st.selectbox("Filtrar por tipo", options=["Todos", "Boleto", "Comprovante", "Outro"], key="filtro_tipo_global")
-query_global = client.table("anexos").select(
-    "id, tipo, nome_arquivo, storage_path, created_at, lancamentos_previstos(descricao, data_vencimento)"
-)
-if filtro_tipo_global != "Todos":
-    query_global = query_global.eq("tipo", filtro_tipo_global.lower())
-anexos_globais = query_global.order("created_at", desc=True).limit(200).execute().data or []
-
-lancamentos_para_vincular = (
-    client.table("lancamentos_previstos")
-    .select("id, descricao, valor, data_vencimento, status")
-    .order("data_vencimento", desc=True)
-    .limit(300)
-    .execute()
-    .data
-    or []
-)
-opcoes_vincular = {
-    l["id"]: f"{data_br(l['data_vencimento'])} — {l['descricao']} — {moeda(l['valor'])} ({l['status']})"
-    for l in lancamentos_para_vincular
-}
-
-if not anexos_globais:
-    st.info("Nenhum anexo guardado ainda.")
-else:
-    for a in anexos_globais:
-        vinculo = a.get("lancamentos_previstos")
-        rotulo = f"{vinculo['descricao']} ({data_br(vinculo['data_vencimento'])})" if vinculo else "sem vínculo a nenhum lançamento"
-        with st.expander(f"📎 {data_br(a['created_at'])} — {a['tipo']} — {a['nome_arquivo']} — {rotulo}"):
-            try:
-                conteudo = client.storage.from_(BUCKET_ANEXOS).download(a["storage_path"])
-                st.download_button("Baixar", data=conteudo, file_name=a["nome_arquivo"], key=f"global_baixar_{a['id']}")
-            except Exception as e:
-                st.error(f"Erro ao carregar arquivo: {e}")
-
-            if not vinculo and opcoes_vincular:
-                st.caption("Sem vínculo — selecione o lançamento certo:")
-                col_sel, col_pago, col_btn = st.columns([3, 1, 1])
-                lancamento_escolhido = col_sel.selectbox(
-                    "Vincular a",
-                    options=list(opcoes_vincular.keys()),
-                    format_func=lambda i: opcoes_vincular[i],
-                    key=f"vincular_sel_{a['id']}",
-                )
-                marcar_pago = col_pago.checkbox("Marcar pago", value=True, key=f"vincular_pago_{a['id']}")
-                if col_btn.button("Vincular", key=f"vincular_btn_{a['id']}"):
-                    client.table("anexos").update({"lancamento_previsto_id": lancamento_escolhido}).eq("id", a["id"]).execute()
-                    if marcar_pago:
-                        client.table("lancamentos_previstos").update(
-                            {"status": "pago", "data_pagamento": date.today().isoformat()}
-                        ).eq("id", lancamento_escolhido).execute()
-                    st.success("Anexo vinculado.")
-                    st.rerun()
-
-            if st.button("Apagar", key=f"global_apagar_{a['id']}"):
-                client.storage.from_(BUCKET_ANEXOS).remove([a["storage_path"]])
-                client.table("anexos").delete().eq("id", a["id"]).execute()
-                if sharepoint.esta_configurado():
-                    try:
-                        sharepoint.remover_arquivo(a["storage_path"])
-                    except Exception as e:
-                        st.warning(f"Não foi possível remover a cópia no SharePoint: {e}")
-                st.success("Anexo apagado.")
-                st.rerun()
+    st.caption("Clique em um lançamento abaixo para ver ou anexar boletos/comprovantes dele.")
+    for item in itens:
+        terceiro = (item.get("clientes") or {}).get("nome") or (item.get("fornecedores") or {}).get("nome") or "-"
+        rotulo = (
+            f"📎 {data_br(item['data_vencimento'])} — {item['descricao']} — {terceiro} — "
+            f"{moeda(item['valor'])} ({item['status']})"
+        )
+        with st.expander(rotulo):
+            _secao_anexos(item["id"], key_prefix=f"extrato_anexo_{item['id']}")
