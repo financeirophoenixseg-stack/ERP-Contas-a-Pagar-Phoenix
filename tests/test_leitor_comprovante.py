@@ -73,6 +73,41 @@ def test_encontrar_lancamento_valor_fora_da_tolerancia_filtrado():
     assert resultado is None
 
 
+def test_encontrar_lancamento_desempata_por_vencimento_exato():
+    # dois pagamentos de R$500 na mesma janela, mas só um vence exatamente na data do pagamento
+    client = _client_com_candidatos(
+        [
+            {"id": "abc-123", "valor": 500.0, "data_vencimento": "2026-08-27"},
+            {"id": "def-456", "valor": 500.0, "data_vencimento": "2026-08-25"},
+        ]
+    )
+    resultado = leitor_comprovante.encontrar_lancamento_correspondente(client, 500.0, "2026-08-27")
+    assert resultado == "abc-123"
+
+
+def test_encontrar_lancamento_desempata_por_nome_do_favorecido():
+    client = _client_com_candidatos(
+        [
+            {"id": "abc-123", "valor": 500.0, "data_vencimento": "2026-08-25", "fornecedores": {"nome": "EDP Energia"}},
+            {"id": "def-456", "valor": 500.0, "data_vencimento": "2026-08-26", "fornecedores": {"nome": "Locadora XPTO"}},
+        ]
+    )
+    resultado = leitor_comprovante.encontrar_lancamento_correspondente(client, 500.0, "2026-08-27", favorecido="EDP")
+    assert resultado == "abc-123"
+
+
+def test_encontrar_lancamento_ainda_ambiguo_apos_desempate_nao_decide():
+    # mesmo vencimento exato pros dois, nome não ajuda -> continua ambíguo
+    client = _client_com_candidatos(
+        [
+            {"id": "abc-123", "valor": 500.0, "data_vencimento": "2026-08-27", "fornecedores": {"nome": "Fornecedor A"}},
+            {"id": "def-456", "valor": 500.0, "data_vencimento": "2026-08-27", "fornecedores": {"nome": "Fornecedor B"}},
+        ]
+    )
+    resultado = leitor_comprovante.encontrar_lancamento_correspondente(client, 500.0, "2026-08-27", favorecido="Sicoob")
+    assert resultado is None
+
+
 def test_encontrar_lancamento_sem_valor_ou_data_retorna_none():
     client = MagicMock()
     assert leitor_comprovante.encontrar_lancamento_correspondente(client, None, "2026-08-27") is None

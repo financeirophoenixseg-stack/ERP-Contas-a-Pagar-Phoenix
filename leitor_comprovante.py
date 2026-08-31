@@ -5,8 +5,9 @@ Mesma lógica do `leitor_boleto.py` (comprovante também não tem layout fixo:
 cada banco/app gera o seu), mas aqui o objetivo é diferente: em vez de criar
 um lançamento novo, o comprovante representa um pagamento que JÁ aconteceu —
 então tentamos casar com um lançamento PREVISTO já existente (por valor +
-proximidade de data) e, se o casamento for inequívoco (exatamente um
-candidato), vincular o anexo e marcar como pago automaticamente.
+proximidade de data, desempatando por vencimento exato ou nome do
+fornecedor/cliente quando sobra mais de um candidato) e, se o casamento for
+inequívoco, vincular o anexo e marcar como pago automaticamente.
 
 Isso é diferente de "inventar" um valor financeiro: o valor do lançamento já
 existia antes (criado manualmente ou por uma comissão/regra), o comprovante
@@ -76,12 +77,27 @@ def ler_comprovante(conteudo_pdf: bytes) -> DadosComprovante:
     )
 
 
-def encontrar_lancamento_correspondente(client, valor: float | None, data_pagamento: str | None) -> str | None:
-    """Procura, entre os lançamentos previstos ainda não pagos, exatamente
-    UM candidato cujo valor bata (± TOLERANCIA_VALOR) e cuja data de
-    vencimento esteja a até TOLERANCIA_DIAS dias da data do pagamento.
-    Retorna o id do lançamento se o casamento for inequívoco, ou None se não
-    houver candidato ou houver mais de um (ambíguo — não decide sozinho)."""
+def _nome_do_candidato(candidato: dict) -> str | None:
+    return (candidato.get("fornecedores") or {}).get("nome") or (candidato.get("clientes") or {}).get("nome")
+
+
+def encontrar_lancamento_correspondente(
+    client, valor: float | None, data_pagamento: str | None, favorecido: str | None = None
+) -> str | None:
+    """Procura, entre os lançamentos previstos ainda não pagos, o candidato
+    que corresponde ao comprovante. Primeiro filtra por valor (±
+    TOLERANCIA_VALOR) e proximidade de vencimento (± TOLERANCIA_DIAS dias da
+    data do pagamento) — se sobrar mais de um candidato (ex.: dois
+    pagamentos de mesmo valor em datas parecidas), tenta desempatar, NESTA
+    ORDEM, só decidindo quando cada critério reduzir pra exatamente um:
+
+    1. Vencimento exatamente igual à data do pagamento.
+    2. Nome do fornecedor/cliente do lançamento bate com o "favorecido"
+       extraído do comprovante (substring, sem acento/caixa).
+
+    Se ainda sobrar mais de um após os dois critérios (ou nenhum candidato
+    de início), retorna None — o comprovante fica sem vínculo para revisão
+    manual, nunca decide um caso realmente ambíguo sozinho."""
     if valor is None or not data_pagamento:
         return None
 
@@ -95,7 +111,7 @@ def encontrar_lancamento_correspondente(client, valor: float | None, data_pagame
 
     candidatos = (
         client.table("lancamentos_previstos")
-        .select("id, valor, data_vencimento")
+        .select("id, valor, data_vencimento, fornecedores(nome), clientes(nome)")
         .eq("status", "previsto")
         .gte("data_vencimento", data_min)
         .lte("data_vencimento", data_max)
@@ -107,4 +123,21 @@ def encontrar_lancamento_correspondente(client, valor: float | None, data_pagame
 
     if len(candidatos) == 1:
         return candidatos[0]["id"]
+    if len(candidatos) < 2:
+        return None
+
+    # desempate 1: vencimento bate exatamente com a data do pagamento
+    exatos = [c for c in candidatos if c["data_vencimento"] == data_ref.isoformat()]
+    if exatos:
+        candidatos = exatos
+    if len(candidatos) == 1:
+        return candidatos[0]["id"]
+
+    # desempate 2: nome do fornecedor/cliente bate com o favorecido do comprovante
+    if favorecido:
+        alvo = favorecido.strip().lower()
+        por_nome = [c for c in candidatos if (nome := _nome_do_candidato(c)) and (nome.lower() in alvo or alvo in nome.lower())]
+        if len(por_nome) == 1:
+            return por_nome[0]["id"]
+
     return None

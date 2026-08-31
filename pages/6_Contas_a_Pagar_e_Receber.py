@@ -251,7 +251,7 @@ else:
                 lancamento_id = None
                 if dados.confianca != "baixa":
                     lancamento_id = leitor_comprovante.encontrar_lancamento_correspondente(
-                        client, dados.valor, dados.data_pagamento
+                        client, dados.valor, dados.data_pagamento, dados.favorecido
                     )
 
                 try:
