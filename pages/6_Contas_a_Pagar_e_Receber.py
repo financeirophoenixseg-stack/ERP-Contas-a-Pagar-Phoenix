@@ -1,10 +1,13 @@
+import calendar
 import hashlib
+import html
 import uuid
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import streamlit as st
 
+import exportacao
 import layout
 import leitor_boleto
 import leitor_comprovante
@@ -12,6 +15,27 @@ import sharepoint
 from db import get_client
 from formatacao import data_br, moeda, parse_valor
 from lancamentos import ParcelaGerada, gerar_parcelas, gerar_recorrencia
+
+MESES_PT = [
+    "janeiro", "fevereiro", "março", "abril", "maio", "junho",
+    "julho", "agosto", "setembro", "outubro", "novembro", "dezembro",
+]
+DIAS_SEMANA_PT = [
+    "Segunda-feira", "Terça-feira", "Quarta-feira", "Quinta-feira",
+    "Sexta-feira", "Sábado", "Domingo",
+]
+
+
+def _rotulo_dia(d: date, hoje: date) -> str:
+    if d == hoje:
+        prefixo = "Hoje"
+    elif d == hoje + timedelta(days=1):
+        prefixo = "Amanhã"
+    elif d == hoje - timedelta(days=1):
+        prefixo = "Ontem"
+    else:
+        prefixo = DIAS_SEMANA_PT[d.weekday()]
+    return f"{prefixo}, {d.day:02d} de {MESES_PT[d.month - 1]}"
 
 BUCKET_ANEXOS = "anexos"
 
@@ -513,67 +537,162 @@ def _secao_anexos(lancamento_id: str, key_prefix: str):
             st.error(f"Erro ao salvar anexo: {e}")
 
 
-def _tabela(tipo_filtro: str, titulo: str):
-    st.subheader(titulo)
-    itens = (
-        client.table("lancamentos_previstos")
-        .select("id, descricao, valor, data_vencimento, status, clientes(nome), fornecedores(nome)")
-        .eq("tipo", tipo_filtro)
-        .in_("status", ["previsto", "pago"])
-        .order("data_vencimento")
-        .execute()
-        .data
-        or []
-    )
-    if not itens:
-        st.info("Nenhum lançamento.")
-        return
+st.subheader("Extrato")
 
-    hoje = date.today().isoformat()
-    linhas = []
+col_tipo, col_periodo = st.columns([1, 2])
+tipo_extrato = col_tipo.radio("Ver", ["Tudo", "A Pagar", "A Receber"], horizontal=True, key="extrato_tipo")
+periodo = col_periodo.radio(
+    "Período",
+    ["Todos", "Atrasados", "Hoje", "Esta semana", "Este mês", "Data específica"],
+    horizontal=True,
+    key="extrato_periodo",
+)
+data_especifica = None
+if periodo == "Data específica":
+    data_especifica = st.date_input(
+        "Escolher data", value=date.today(), format="DD/MM/YYYY", key="extrato_data_especifica"
+    )
+
+query = (
+    client.table("lancamentos_previstos")
+    .select("id, tipo, descricao, valor, data_vencimento, status, clientes(nome), fornecedores(nome)")
+    .in_("status", ["previsto", "pago"])
+)
+if tipo_extrato == "A Pagar":
+    query = query.eq("tipo", "pagar")
+elif tipo_extrato == "A Receber":
+    query = query.eq("tipo", "receber")
+
+hoje = date.today()
+if periodo == "Atrasados":
+    query = query.eq("status", "previsto").lt("data_vencimento", hoje.isoformat())
+elif periodo == "Hoje":
+    query = query.eq("data_vencimento", hoje.isoformat())
+elif periodo == "Esta semana":
+    inicio_semana = hoje - timedelta(days=hoje.weekday())
+    fim_semana = inicio_semana + timedelta(days=6)
+    query = query.gte("data_vencimento", inicio_semana.isoformat()).lte("data_vencimento", fim_semana.isoformat())
+elif periodo == "Este mês":
+    inicio_mes = hoje.replace(day=1)
+    fim_mes = hoje.replace(day=calendar.monthrange(hoje.year, hoje.month)[1])
+    query = query.gte("data_vencimento", inicio_mes.isoformat()).lte("data_vencimento", fim_mes.isoformat())
+elif periodo == "Data específica" and data_especifica:
+    query = query.eq("data_vencimento", data_especifica.isoformat())
+
+itens = query.order("data_vencimento").execute().data or []
+
+linhas_export = [
+    {
+        "Vencimento": data_br(i["data_vencimento"]),
+        "Tipo": "Pagar" if i["tipo"] == "pagar" else "Receber",
+        "Descrição": i["descricao"],
+        "Cliente/Fornecedor": (i.get("clientes") or {}).get("nome") or (i.get("fornecedores") or {}).get("nome") or "-",
+        "Valor": moeda(i["valor"]),
+        "Situação": "atrasado" if i["status"] == "previsto" and i["data_vencimento"] < hoje.isoformat() else i["status"],
+    }
+    for i in itens
+]
+col_exp1, col_exp2, _ = st.columns([1, 1, 3])
+col_exp1.download_button(
+    "⬇️ Exportar Excel",
+    data=exportacao.gerar_excel(linhas_export, "Extrato"),
+    file_name=f"extrato_{hoje.isoformat()}.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    disabled=not linhas_export,
+    key="extrato_export_excel",
+)
+col_exp2.download_button(
+    "⬇️ Exportar PDF",
+    data=exportacao.gerar_pdf(linhas_export, f"Extrato — {tipo_extrato} — {periodo}"),
+    file_name=f"extrato_{hoje.isoformat()}.pdf",
+    mime="application/pdf",
+    disabled=not linhas_export,
+    key="extrato_export_pdf",
+)
+
+if not itens:
+    st.info("Nenhum lançamento neste filtro.")
+else:
+    grupos: dict[str, list] = {}
     for item in itens:
-        situacao = item["status"]
-        if situacao == "previsto" and item["data_vencimento"] < hoje:
-            situacao = "atrasado"
-        terceiro = (item.get("clientes") or {}).get("nome") or (item.get("fornecedores") or {}).get("nome") or "-"
-        linhas.append(
-            {
-                "Vencimento": data_br(item["data_vencimento"]),
-                "Descrição": item["descricao"],
-                "Cliente/Fornecedor": terceiro,
-                "Valor": moeda(item["valor"]),
-                "Situação": situacao,
-            }
+        grupos.setdefault(item["data_vencimento"], []).append(item)
+
+    partes = []
+    for dia_iso in sorted(grupos.keys()):
+        dia = date.fromisoformat(dia_iso)
+        itens_dia = grupos[dia_iso]
+        atrasado = dia < hoje and any(i["status"] == "previsto" for i in itens_dia)
+        classe_head = "day-head atrasado" if atrasado else "day-head"
+        pill_atraso = (
+            f'<span class="pill pill-red">{(hoje - dia).days} dia(s) em atraso</span>' if atrasado else ""
         )
-    st.dataframe(linhas, use_container_width=True, hide_index=True)
+        partes.append(
+            f"""
+            <div class="{classe_head}">
+                <span class="day-head-label">{_rotulo_dia(dia, hoje)}</span>
+                {pill_atraso}
+            </div>
+            """
+        )
+        for item in itens_dia:
+            terceiro = (item.get("clientes") or {}).get("nome") or (item.get("fornecedores") or {}).get("nome") or "-"
+            eh_receber = item["tipo"] == "receber"
+            cor_valor = "#0ca30c" if eh_receber else "#10233F"
+            sinal = "+" if eh_receber else "-"
+            icone = layout.ICONES["receber"] if eh_receber else layout.ICONES["pagar"]
+            if item["status"] == "pago":
+                selo = '<span class="pill pill-green">pago</span>'
+            elif item["status"] == "previsto" and item["data_vencimento"] < hoje.isoformat():
+                selo = '<span class="pill pill-red">atrasado</span>'
+            else:
+                selo = '<span class="pill pill-neutral">previsto</span>'
+            partes.append(
+                f"""
+                <div class="extrato-row">
+                    <div class="extrato-avatar">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">{icone}</svg>
+                    </div>
+                    <div style="flex:1;">
+                        <div class="extrato-desc">{html.escape(item['descricao'] or '-')}</div>
+                        <div class="extrato-sub">{html.escape(terceiro)}</div>
+                    </div>
+                    {selo}
+                    <span class="extrato-value" style="color:{cor_valor};min-width:100px;text-align:right;">{sinal}{moeda(abs(item['valor']))}</span>
+                </div>
+                """
+            )
+    st.markdown(
+        layout._compacto(f'<div class="card" style="padding:10px 18px;">{"".join(partes)}</div>'),
+        unsafe_allow_html=True,
+    )
 
     pendentes = [i for i in itens if i["status"] == "previsto"]
     if pendentes:
         opcoes = {i["id"]: f"{data_br(i['data_vencimento'])} — {i['descricao']} — {moeda(i['valor'])}" for i in pendentes}
         col_a, col_b, col_c = st.columns([3, 1, 1])
-        selecionado = col_a.selectbox("Ação rápida em:", options=list(opcoes.keys()), format_func=lambda i: opcoes[i], key=f"sel_{tipo_filtro}")
-        if col_b.button("Marcar como pago", key=f"pago_{tipo_filtro}"):
+        selecionado = col_a.selectbox(
+            "Ação rápida em:", options=list(opcoes.keys()), format_func=lambda i: opcoes[i], key="extrato_sel_acao"
+        )
+        if col_b.button("Marcar como pago", key="extrato_marcar_pago"):
             client.table("lancamentos_previstos").update(
                 {"status": "pago", "data_pagamento": date.today().isoformat()}
             ).eq("id", selecionado).execute()
             st.success("Marcado como pago.")
             st.rerun()
-        if col_c.button("Cancelar", key=f"cancelar_{tipo_filtro}"):
+        if col_c.button("Cancelar", key="extrato_cancelar"):
             client.table("lancamentos_previstos").update({"status": "cancelado"}).eq("id", selecionado).execute()
             st.success("Cancelado.")
             st.rerun()
 
-    opcoes_anexo = {i["id"]: f"{data_br(i['data_vencimento'])} — {i['descricao']} — {moeda(i['valor'])} ({i['status']})" for i in itens}
+    opcoes_anexo = {
+        i["id"]: f"{data_br(i['data_vencimento'])} — {i['descricao']} — {moeda(i['valor'])} ({i['status']})"
+        for i in itens
+    }
     lancamento_anexo_id = st.selectbox(
-        "Anexos de:", options=list(opcoes_anexo.keys()), format_func=lambda i: opcoes_anexo[i], key=f"sel_anexo_{tipo_filtro}"
+        "Anexos de:", options=list(opcoes_anexo.keys()), format_func=lambda i: opcoes_anexo[i], key="extrato_sel_anexo"
     )
     with st.expander("📎 Boletos e comprovantes deste lançamento"):
-        _secao_anexos(lancamento_anexo_id, key_prefix=f"anexo_{tipo_filtro}_{lancamento_anexo_id}")
-
-
-_tabela("pagar", "Contas a Pagar")
-st.divider()
-_tabela("receber", "Contas a Receber")
+        _secao_anexos(lancamento_anexo_id, key_prefix=f"extrato_anexo_{lancamento_anexo_id}")
 
 st.divider()
 st.subheader("Todos os anexos")

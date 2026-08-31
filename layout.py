@@ -153,7 +153,7 @@ h1, h2, h3 { font-family: 'Manrope', sans-serif; letter-spacing: -0.01em; }
 .pill-blue { background: rgba(30,95,191,0.10); color: #1E5FBF; }
 
 .day-head { display: flex; align-items: center; justify-content: space-between; padding: 9px 4px; margin-top: 6px; }
-.day-head-label { font-size: 12px; font-weight: 700; color: #8592A8; letter-spacing: 0.03em; }
+.day-head-label { font-size: 12px; font-weight: 700; color: #8592A8; letter-spacing: 0.03em; text-transform: uppercase; }
 .day-head.atrasado { background: rgba(208,59,59,0.07); border-radius: 8px; padding: 9px 10px; margin: 6px 0 0 0; }
 .day-head.atrasado .day-head-label { color: #B23A3A; }
 .extrato-row { display: flex; align-items: center; gap: 12px; padding: 11px 4px; border-top: 1px solid #F0F2F6; }

@@ -8,4 +8,5 @@ pytest>=8.0
 msal>=1.28
 requests>=2.31
 anthropic>=0.40
+reportlab>=4.0
 # requests já está listado acima (usado também pela integração Pluggy)
