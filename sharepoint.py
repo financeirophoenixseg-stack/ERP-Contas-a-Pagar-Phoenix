@@ -29,6 +29,17 @@ GRAPH_URL = "https://graph.microsoft.com/v1.0"
 _token_cache: dict = {"access_token": None, "expira_em": 0}
 
 
+def _caminho_para_url(caminho_destino: str) -> str:
+    """Valida e monta a parte do caminho da URL do Graph. Recusa qualquer
+    segmento '..' ou vazio (defesa extra: o chamador já deveria ter
+    sanitizado o nome do arquivo antes de montar `caminho_destino`, mas esta
+    função é um sink comum a qualquer chamador futuro)."""
+    partes = caminho_destino.split("/")
+    if any(parte in ("", "..", ".") for parte in partes):
+        raise ValueError(f"Caminho de destino inválido: {caminho_destino!r}")
+    return "/".join(requests.utils.quote(parte) for parte in partes)
+
+
 def esta_configurado() -> bool:
     return all(
         os.environ.get(v)
@@ -71,9 +82,7 @@ def enviar_arquivo(caminho_destino: str, conteudo: bytes) -> str:
     site_id = os.environ["MS_SITE_ID"]
     token = _obter_token()
 
-    caminho_url = "/".join(
-        requests.utils.quote(parte) for parte in caminho_destino.split("/")
-    )
+    caminho_url = _caminho_para_url(caminho_destino)
     url = f"{GRAPH_URL}/sites/{site_id}/drive/root:/{caminho_url}:/content"
 
     resp = requests.put(
@@ -92,9 +101,7 @@ def remover_arquivo(caminho_destino: str) -> None:
     site_id = os.environ["MS_SITE_ID"]
     token = _obter_token()
 
-    caminho_url = "/".join(
-        requests.utils.quote(parte) for parte in caminho_destino.split("/")
-    )
+    caminho_url = _caminho_para_url(caminho_destino)
     url = f"{GRAPH_URL}/sites/{site_id}/drive/root:/{caminho_url}"
 
     resp = requests.delete(url, headers={"Authorization": f"Bearer {token}"})

@@ -1,5 +1,6 @@
 import uuid
 from datetime import date
+from pathlib import Path
 
 import streamlit as st
 
@@ -134,7 +135,9 @@ else:
 
             arquivo_info = st.session_state["boleto_lido_arquivo"]
             hoje = date.today()
-            nome_seguro = f"{uuid.uuid4().hex}_{arquivo_info['nome']}"
+            # nome do upload não é confiável (pode trazer ".." ou um caminho
+            # absoluto) — usa só o nome do arquivo em si, sem componentes de diretório.
+            nome_seguro = f"{uuid.uuid4().hex}_{Path(arquivo_info['nome']).name}"
             caminho_storage = f"{hoje.year}/{hoje.month:02d}/boleto/{nome_seguro}"
             try:
                 client.storage.from_(BUCKET_ANEXOS).upload(
@@ -287,7 +290,9 @@ if st.button("Cadastrar", type="primary", disabled=not parcelas_preview or not d
 
     if arquivo_anexo is not None and primeiro_id is not None:
         hoje = date.today()
-        nome_seguro = f"{uuid.uuid4().hex}_{arquivo_anexo.name}"
+        # nome do upload não é confiável (pode trazer ".." ou um caminho
+        # absoluto) — usa só o nome do arquivo em si, sem componentes de diretório.
+        nome_seguro = f"{uuid.uuid4().hex}_{Path(arquivo_anexo.name).name}"
         caminho_storage = f"{hoje.year}/{hoje.month:02d}/boleto/{nome_seguro}"
         try:
             client.storage.from_(BUCKET_ANEXOS).upload(
@@ -356,7 +361,9 @@ def _secao_anexos(lancamento_id: str, key_prefix: str):
     novo_arquivo = col_arquivo.file_uploader("Novo anexo", key=f"{key_prefix}_upload")
     if novo_arquivo is not None and st.button("Salvar anexo", key=f"{key_prefix}_salvar"):
         hoje = date.today()
-        nome_seguro = f"{uuid.uuid4().hex}_{novo_arquivo.name}"
+        # nome do upload não é confiável (pode trazer ".." ou um caminho
+        # absoluto) — usa só o nome do arquivo em si, sem componentes de diretório.
+        nome_seguro = f"{uuid.uuid4().hex}_{Path(novo_arquivo.name).name}"
         caminho_storage = f"{hoje.year}/{hoje.month:02d}/{tipo_novo_anexo.lower()}/{nome_seguro}"
         try:
             client.storage.from_(BUCKET_ANEXOS).upload(
