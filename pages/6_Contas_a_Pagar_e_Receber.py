@@ -7,10 +7,27 @@ import streamlit as st
 import leitor_boleto
 import sharepoint
 from db import get_client
-from formatacao import data_br, moeda
+from formatacao import data_br, moeda, parse_valor
 from lancamentos import ParcelaGerada, gerar_parcelas, gerar_recorrencia
 
 BUCKET_ANEXOS = "anexos"
+
+
+def _campo_valor(coluna, label: str, key: str, valor_inicial: float = 0.0) -> float:
+    """Campo de texto livre pra digitar um valor em reais (aceita '1000',
+    '1000,50' ou '1.000,50') — evita o campo numérico nativo do navegador,
+    que mistura dígitos digitados com o conteúdo antigo do campo. Mostra o
+    valor interpretado logo abaixo, formatado, pra o usuário conferir."""
+    texto = coluna.text_input(label, value=moeda(valor_inicial).replace("R$ ", ""), key=key)
+    try:
+        valor = parse_valor(texto)
+        if valor < 0:
+            raise ValueError
+        coluna.caption(moeda(valor))
+    except ValueError:
+        coluna.caption("⚠️ valor inválido — use só números, vírgula pra decimal")
+        valor = 0.0
+    return valor
 
 st.set_page_config(page_title="Contas a Pagar e Receber", layout="wide")
 st.title("Contas a Pagar e Receber")
@@ -69,10 +86,7 @@ else:
         st.caption("Confira e corrija os dados abaixo antes de confirmar — nada é lançado sem sua confirmação.")
 
         c1, c2 = st.columns(2)
-        valor_confirmado = c1.number_input(
-            "Valor (R$)", min_value=0.0, step=0.01, format="%.2f", value=float(dados.valor or 0), key="valor_boleto_ia"
-        )
-        c1.caption(moeda(valor_confirmado))
+        valor_confirmado = _campo_valor(c1, "Valor (R$)", "valor_boleto_ia", valor_inicial=float(dados.valor or 0))
         try:
             venc_padrao = date.fromisoformat(dados.data_vencimento) if dados.data_vencimento else date.today()
         except ValueError:
@@ -220,8 +234,7 @@ modo = st.radio("Como é esse lançamento?", ["Avulso", "Parcelado", "Fixo (reco
 parcelas_preview = []
 if modo == "Avulso":
     c1, c2 = st.columns(2)
-    valor = c1.number_input("Valor (R$)", min_value=0.0, step=0.01, format="%.2f")
-    c1.caption(moeda(valor))
+    valor = _campo_valor(c1, "Valor (R$)", "valor_avulso")
     data_vencimento = c2.date_input("Data de vencimento", value=date.today(), format="DD/MM/YYYY")
     if valor > 0:
         parcelas_preview = [
@@ -229,16 +242,14 @@ if modo == "Avulso":
         ]
 elif modo == "Parcelado":
     c1, c2, c3 = st.columns(3)
-    valor_total = c1.number_input("Valor total (R$)", min_value=0.0, step=0.01, format="%.2f")
-    c1.caption(moeda(valor_total))
+    valor_total = _campo_valor(c1, "Valor total (R$)", "valor_parcelado")
     num_parcelas = c2.number_input("Número de parcelas", min_value=1, step=1, value=2)
     data_primeira = c3.date_input("Vencimento da 1ª parcela", value=date.today(), format="DD/MM/YYYY")
     if valor_total > 0:
         parcelas_preview = gerar_parcelas(valor_total, int(num_parcelas), data_primeira)
 else:
     c1, c2, c3 = st.columns(3)
-    valor_mensal = c1.number_input("Valor mensal (R$)", min_value=0.0, step=0.01, format="%.2f")
-    c1.caption(moeda(valor_mensal))
+    valor_mensal = _campo_valor(c1, "Valor mensal (R$)", "valor_fixo")
     data_primeiro_vencimento = c2.date_input("1º vencimento", value=date.today(), format="DD/MM/YYYY")
     meses_a_gerar = c3.number_input("Gerar quantos meses à frente?", min_value=1, step=1, value=12)
     if valor_mensal > 0:

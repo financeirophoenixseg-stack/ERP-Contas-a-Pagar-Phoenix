@@ -1,6 +1,8 @@
 from datetime import date
 
-from formatacao import data_br, moeda
+import pytest
+
+from formatacao import data_br, moeda, parse_valor
 
 
 def test_moeda_formato_brasileiro():
@@ -34,3 +36,35 @@ def test_data_br_ausente():
 
 def test_data_br_texto_nao_reconhecido_volta_como_esta():
     assert data_br("sem vínculo") == "sem vínculo"
+
+
+def test_parse_valor_formato_brasileiro_com_milhar():
+    assert parse_valor("1.000,50") == 1000.50
+    assert parse_valor("1.234.567,89") == 1234567.89
+
+
+def test_parse_valor_so_virgula_decimal():
+    assert parse_valor("1000,5") == 1000.5
+    assert parse_valor("0,00") == 0.0
+
+
+def test_parse_valor_digitacao_simples_sem_milhar():
+    assert parse_valor("1000") == 1000.0
+    assert parse_valor("1000.5") == 1000.5
+
+
+def test_parse_valor_com_prefixo_e_espacos():
+    assert parse_valor("R$ 1.000,00") == 1000.0
+    assert parse_valor("  1000,00  ") == 1000.0
+
+
+def test_parse_valor_vazio_vira_zero():
+    assert parse_valor("") == 0.0
+    assert parse_valor(None) == 0.0
+
+
+def test_parse_valor_invalido_levanta_erro():
+    with pytest.raises(ValueError):
+        parse_valor("abc")
+    with pytest.raises(ValueError):
+        parse_valor("12,34,56")

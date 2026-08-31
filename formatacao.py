@@ -18,6 +18,21 @@ def moeda(valor: float | int | None) -> str:
     return f"R$ {texto}"
 
 
+def parse_valor(texto: str) -> float:
+    """Interpreta um valor em reais digitado livremente pelo usuário, aceitando
+    tanto o formato brasileiro ('1.000,50', '1000,50') quanto digitação simples
+    sem separador de milhar ('1000.5', '1000'). Levanta ValueError se não for
+    um número reconhecível — o chamador decide como avisar o usuário."""
+    texto = (texto or "").strip().replace("R$", "").replace(" ", "")
+    if not texto:
+        return 0.0
+    if "," in texto:
+        # vírgula presente: é o separador decimal brasileiro — qualquer ponto
+        # antes dela é separador de milhar, descarta.
+        texto = texto.replace(".", "").replace(",", ".")
+    return float(texto)
+
+
 def data_br(valor: date | datetime | str | None) -> str:
     """Formata uma data como 'DD/MM/AAAA'. Aceita date/datetime ou string ISO
     ('2026-08-31' ou '2026-08-31T00:00:00'), vinda direto do Supabase.
