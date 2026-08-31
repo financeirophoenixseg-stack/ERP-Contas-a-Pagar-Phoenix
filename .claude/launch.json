@@ -4,7 +4,7 @@
     {
       "name": "erp-streamlit",
       "runtimeExecutable": ".venv\\Scripts\\streamlit.exe",
-      "runtimeArgs": ["run", "app.py", "--server.headless", "true"],
+      "runtimeArgs": ["run", "Dashboard.py", "--server.headless", "true"],
       "port": 8501
     }
   ]
