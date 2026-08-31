@@ -553,6 +553,20 @@ if filtro_tipo_global != "Todos":
     query_global = query_global.eq("tipo", filtro_tipo_global.lower())
 anexos_globais = query_global.order("created_at", desc=True).limit(200).execute().data or []
 
+lancamentos_para_vincular = (
+    client.table("lancamentos_previstos")
+    .select("id, descricao, valor, data_vencimento, status")
+    .order("data_vencimento", desc=True)
+    .limit(300)
+    .execute()
+    .data
+    or []
+)
+opcoes_vincular = {
+    l["id"]: f"{data_br(l['data_vencimento'])} — {l['descricao']} — {moeda(l['valor'])} ({l['status']})"
+    for l in lancamentos_para_vincular
+}
+
 if not anexos_globais:
     st.info("Nenhum anexo guardado ainda.")
 else:
@@ -565,6 +579,26 @@ else:
                 st.download_button("Baixar", data=conteudo, file_name=a["nome_arquivo"], key=f"global_baixar_{a['id']}")
             except Exception as e:
                 st.error(f"Erro ao carregar arquivo: {e}")
+
+            if not vinculo and opcoes_vincular:
+                st.caption("Sem vínculo — selecione o lançamento certo:")
+                col_sel, col_pago, col_btn = st.columns([3, 1, 1])
+                lancamento_escolhido = col_sel.selectbox(
+                    "Vincular a",
+                    options=list(opcoes_vincular.keys()),
+                    format_func=lambda i: opcoes_vincular[i],
+                    key=f"vincular_sel_{a['id']}",
+                )
+                marcar_pago = col_pago.checkbox("Marcar pago", value=True, key=f"vincular_pago_{a['id']}")
+                if col_btn.button("Vincular", key=f"vincular_btn_{a['id']}"):
+                    client.table("anexos").update({"lancamento_previsto_id": lancamento_escolhido}).eq("id", a["id"]).execute()
+                    if marcar_pago:
+                        client.table("lancamentos_previstos").update(
+                            {"status": "pago", "data_pagamento": date.today().isoformat()}
+                        ).eq("id", lancamento_escolhido).execute()
+                    st.success("Anexo vinculado.")
+                    st.rerun()
+
             if st.button("Apagar", key=f"global_apagar_{a['id']}"):
                 client.storage.from_(BUCKET_ANEXOS).remove([a["storage_path"]])
                 client.table("anexos").delete().eq("id", a["id"]).execute()
