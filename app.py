@@ -1,10 +1,11 @@
-from datetime import date
+from datetime import date, timedelta
 
 import streamlit as st
 
 import layout
 from db import get_client
 from formatacao import data_br, moeda
+from graficos import grafico_donut_status, grafico_fluxo_caixa
 
 st.set_page_config(page_title="ERP Phoenix/Vizentim", layout="wide")
 layout.aplicar_logo()
@@ -21,7 +22,8 @@ except Exception as e:
     st.error(f"Erro ao conectar ao Supabase: {e}")
     st.stop()
 
-hoje = date.today().isoformat()
+hoje = date.today()
+hoje_iso = hoje.isoformat()
 
 previstos = (
     client.table("lancamentos_previstos")
@@ -33,23 +35,42 @@ previstos = (
 )
 a_pagar = [p for p in previstos if p["tipo"] == "pagar"]
 a_receber = [p for p in previstos if p["tipo"] == "receber"]
-a_pagar_vencido = [p for p in a_pagar if p["data_vencimento"] < hoje]
-a_receber_vencido = [p for p in a_receber if p["data_vencimento"] < hoje]
+a_pagar_vencido = [p for p in a_pagar if p["data_vencimento"] < hoje_iso]
+a_receber_vencido = [p for p in a_receber if p["data_vencimento"] < hoje_iso]
 
-col1, col2, col3, col4 = st.columns(4)
-col1.metric("A pagar (previsto)", moeda(sum(p["valor"] for p in a_pagar)), f"{len(a_pagar)} lançamento(s)")
-col2.metric(
-    "A pagar vencido",
-    moeda(sum(p["valor"] for p in a_pagar_vencido)),
-    f"{len(a_pagar_vencido)} lançamento(s)",
-    delta_color="inverse",
-)
-col3.metric("A receber (previsto)", moeda(sum(p["valor"] for p in a_receber)), f"{len(a_receber)} lançamento(s)")
-col4.metric(
-    "A receber vencido",
-    moeda(sum(p["valor"] for p in a_receber_vencido)),
-    f"{len(a_receber_vencido)} lançamento(s)",
-    delta_color="inverse",
+layout.cartoes_kpi(
+    [
+        {
+            "icone": "pagar",
+            "label": "A pagar (previsto)",
+            "valor": moeda(sum(p["valor"] for p in a_pagar)),
+            "pill_texto": f"{len(a_pagar)} lançamento(s)",
+            "pill_classe": "pill-neutral",
+        },
+        {
+            "icone": "alerta",
+            "cor": "#B23A3A",
+            "label": "A pagar vencido",
+            "valor": moeda(sum(p["valor"] for p in a_pagar_vencido)),
+            "pill_texto": f"{len(a_pagar_vencido)} lançamento(s)",
+            "pill_classe": "pill-red",
+        },
+        {
+            "icone": "receber",
+            "label": "A receber (previsto)",
+            "valor": moeda(sum(p["valor"] for p in a_receber)),
+            "pill_texto": f"{len(a_receber)} lançamento(s)",
+            "pill_classe": "pill-neutral",
+        },
+        {
+            "icone": "receber",
+            "cor": "#0ca30c",
+            "label": "A receber vencido",
+            "valor": moeda(sum(p["valor"] for p in a_receber_vencido)),
+            "pill_texto": f"{len(a_receber_vencido)} lançamento(s)",
+            "pill_classe": "pill-red" if a_receber_vencido else "pill-green",
+        },
+    ]
 )
 
 st.divider()
@@ -59,14 +80,63 @@ por_status = {"pendente": [], "conciliado": [], "divergente": []}
 for l in lotes:
     por_status.setdefault(l["status"], []).append(l)
 
-col1, col2, col3 = st.columns(3)
-col1.metric("Comissões conciliadas", len(por_status["conciliado"]), moeda(sum(l["valor_liquido"] for l in por_status["conciliado"])))
-col2.metric("Comissões pendentes", len(por_status["pendente"]), moeda(sum(l["valor_liquido"] for l in por_status["pendente"])))
-col3.metric("Comissões divergentes ⚠️", len(por_status["divergente"]), moeda(sum(l["valor_liquido"] for l in por_status["divergente"])))
+col_grafico, col_donut = st.columns([2, 1])
+
+with col_grafico:
+    st.markdown("##### Fluxo de caixa")
+    st.caption("Últimos 6 meses — Receitas x Despesas (extratos OFX importados)")
+
+    inicio_periodo = (hoje.replace(day=1) - timedelta(days=150)).isoformat()
+    transacoes_periodo = (
+        client.table("ofx_transacoes").select("data, valor").gte("data", inicio_periodo).execute().data or []
+    )
+    por_mes: dict[str, dict[str, float]] = {}
+    cursor = hoje.replace(day=1)
+    ordem_meses = []
+    for _ in range(6):
+        chave = cursor.strftime("%Y-%m")
+        ordem_meses.append(chave)
+        por_mes[chave] = {"receitas": 0.0, "despesas": 0.0}
+        cursor = (cursor.replace(day=1) - timedelta(days=1)).replace(day=1)
+    ordem_meses.reverse()
+
+    for t in transacoes_periodo:
+        chave = t["data"][:7]
+        if chave in por_mes:
+            if t["valor"] >= 0:
+                por_mes[chave]["receitas"] += t["valor"]
+            else:
+                por_mes[chave]["despesas"] += abs(t["valor"])
+
+    nomes_mes = {
+        "01": "Jan", "02": "Fev", "03": "Mar", "04": "Abr", "05": "Mai", "06": "Jun",
+        "07": "Jul", "08": "Ago", "09": "Set", "10": "Out", "11": "Nov", "12": "Dez",
+    }
+    labels_meses = [nomes_mes[chave[5:7]] for chave in ordem_meses]
+    receitas_mes = [por_mes[chave]["receitas"] for chave in ordem_meses]
+    despesas_mes = [por_mes[chave]["despesas"] for chave in ordem_meses]
+
+    st.markdown(grafico_fluxo_caixa(labels_meses, receitas_mes, despesas_mes), unsafe_allow_html=True)
+
+with col_donut:
+    st.markdown("##### Comissões por status")
+    st.caption("Lotes importados")
+    st.markdown(
+        grafico_donut_status(
+            [
+                ("Conciliadas", len(por_status["conciliado"]), "#0ca30c"),
+                ("Pendentes", len(por_status["pendente"]), "#fab219"),
+                ("Divergentes", len(por_status["divergente"]), "#d03b3b"),
+            ],
+            total_label="lotes",
+        ),
+        unsafe_allow_html=True,
+    )
+
+st.divider()
 
 alertas = client.table("auditoria_alertas").select("id, tipo, descricao, created_at").eq("resolvido", False).order("created_at", desc=True).execute().data or []
 if alertas:
-    st.divider()
     st.subheader(f"⚠️ {len(alertas)} alerta(s) de auditoria não resolvido(s)")
     st.dataframe(
         [{"Data": data_br(a["created_at"]), "Tipo": a["tipo"], "Descrição": a["descricao"]} for a in alertas],
@@ -74,14 +144,18 @@ if alertas:
         hide_index=True,
     )
     st.caption("Veja e resolva em **Alertas**.")
+    st.divider()
 
-st.divider()
 n_empresas = len(client.table("empresas").select("id").execute().data or [])
 n_contas = len(client.table("contas_bancarias").select("id").execute().data or [])
 n_clientes = len(client.table("clientes").select("id").execute().data or [])
-col1, col2, col3 = st.columns(3)
-col1.metric("Empresas", n_empresas)
-col2.metric("Contas bancárias", n_contas)
-col3.metric("Clientes cadastrados", n_clientes)
+
+layout.cartoes_kpi(
+    [
+        {"icone": "maleta", "label": "Empresas", "valor": str(n_empresas)},
+        {"icone": "banco", "label": "Contas bancárias", "valor": str(n_contas)},
+        {"icone": "usuarios", "label": "Clientes cadastrados", "valor": str(n_clientes)},
+    ]
+)
 
 st.caption("Ver [PLANO.md](.) para escopo completo, modelo de dados e cronograma.")
