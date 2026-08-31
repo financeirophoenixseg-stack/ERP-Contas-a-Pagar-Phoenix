@@ -18,14 +18,9 @@ lançamento contábil.
 
 from __future__ import annotations
 
-import base64
-import json
-import os
 from dataclasses import dataclass
 
-import anthropic
-
-MODELO = "claude-sonnet-5"
+from leitor_ia import esta_configurado, ler_documento  # noqa: F401 (re-exportado)
 
 _PROMPT_SISTEMA = """Você lê boletos bancários e guias de pagamento brasileiras (FGTS, DAS, GPS, \
 concessionárias, boletos comuns etc.) e extrai os dados em JSON estrito, sem nenhum texto antes ou depois.
@@ -54,10 +49,6 @@ class DadosBoleto:
     observacoes: str | None
 
 
-def esta_configurado() -> bool:
-    return bool(os.environ.get("ANTHROPIC_API_KEY"))
-
-
 def ler_boleto(conteudo_pdf: bytes) -> DadosBoleto:
     """Envia o PDF do boleto/guia para a IA e retorna os dados extraídos.
 
@@ -66,36 +57,7 @@ def ler_boleto(conteudo_pdf: bytes) -> DadosBoleto:
     preencha manualmente", nunca preencher um lançamento sozinho a partir de
     um erro.
     """
-    client = anthropic.Anthropic()
-
-    resposta = client.messages.create(
-        model=MODELO,
-        max_tokens=1024,
-        system=_PROMPT_SISTEMA,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "document",
-                        "source": {
-                            "type": "base64",
-                            "media_type": "application/pdf",
-                            "data": base64.b64encode(conteudo_pdf).decode(),
-                        },
-                    },
-                    {"type": "text", "text": "Extraia os dados deste boleto/guia conforme instruído."},
-                ],
-            }
-        ],
-    )
-
-    texto = "".join(bloco.text for bloco in resposta.content if bloco.type == "text").strip()
-
-    try:
-        dados = json.loads(texto)
-    except json.JSONDecodeError as e:
-        raise RuntimeError(f"Resposta da IA não veio em JSON válido: {texto[:300]!r}") from e
+    dados = ler_documento(conteudo_pdf, _PROMPT_SISTEMA, "Extraia os dados deste boleto/guia conforme instruído.")
 
     return DadosBoleto(
         valor=dados.get("valor"),

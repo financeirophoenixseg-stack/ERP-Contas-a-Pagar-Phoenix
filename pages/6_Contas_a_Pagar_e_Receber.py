@@ -5,6 +5,7 @@ from pathlib import Path
 import streamlit as st
 
 import leitor_boleto
+import leitor_comprovante
 import sharepoint
 from db import get_client
 from formatacao import data_br, moeda, parse_valor
@@ -186,6 +187,80 @@ else:
             del st.session_state["boleto_lido"]
             del st.session_state["boleto_lido_arquivo"]
             st.rerun()
+
+st.divider()
+st.subheader("📎 Enviar vários comprovantes de uma vez (IA vincula e dá baixa sozinha)")
+if not leitor_comprovante.esta_configurado():
+    st.caption("Configure `ANTHROPIC_API_KEY` no arquivo `.env` para habilitar a leitura automática de comprovantes.")
+else:
+    st.caption(
+        "Cada comprovante é lido pela IA e casado com um lançamento previsto (por valor + proximidade de data). "
+        "Quando o casamento é certo (exatamente um candidato), o anexo é vinculado e o lançamento marcado como "
+        "pago automaticamente. Quando fica ambíguo ou a leitura não é confiável, o comprovante é salvo sem "
+        "vínculo, para você resolver manualmente em **Todos os anexos**."
+    )
+    comprovantes = st.file_uploader(
+        "Suba um ou vários PDFs de comprovante",
+        type=["pdf"],
+        accept_multiple_files=True,
+        key="upload_comprovantes_lote",
+    )
+    if comprovantes and st.button("Processar comprovantes", type="primary"):
+        resultados = []
+        with st.spinner(f"Lendo {len(comprovantes)} comprovante(s)..."):
+            for arquivo in comprovantes:
+                conteudo = arquivo.getvalue()
+                hoje = date.today()
+                # nome do upload não é confiável — usa só o nome do arquivo, sem componentes de diretório.
+                nome_seguro = f"{uuid.uuid4().hex}_{Path(arquivo.name).name}"
+                caminho_storage = f"{hoje.year}/{hoje.month:02d}/comprovante/{nome_seguro}"
+
+                try:
+                    dados = leitor_comprovante.ler_comprovante(conteudo)
+                except Exception as e:
+                    resultados.append({"Arquivo": arquivo.name, "Valor lido": "-", "Resultado": f"❌ erro na leitura: {e}"})
+                    continue
+
+                lancamento_id = None
+                if dados.confianca != "baixa":
+                    lancamento_id = leitor_comprovante.encontrar_lancamento_correspondente(
+                        client, dados.valor, dados.data_pagamento
+                    )
+
+                try:
+                    client.storage.from_(BUCKET_ANEXOS).upload(
+                        caminho_storage, conteudo, {"content-type": arquivo.type or "application/pdf"}
+                    )
+                    client.table("anexos").insert(
+                        {
+                            "lancamento_previsto_id": lancamento_id,
+                            "tipo": "comprovante",
+                            "nome_arquivo": arquivo.name,
+                            "storage_path": caminho_storage,
+                        }
+                    ).execute()
+                    if sharepoint.esta_configurado():
+                        try:
+                            sharepoint.enviar_arquivo(caminho_storage, conteudo)
+                        except Exception as e:
+                            st.warning(f"'{arquivo.name}': anexo salvo, mas a cópia pro SharePoint falhou: {e}")
+                except Exception as e:
+                    resultados.append({"Arquivo": arquivo.name, "Valor lido": "-", "Resultado": f"❌ erro ao salvar: {e}"})
+                    continue
+
+                valor_lido = moeda(dados.valor) if dados.valor is not None else "-"
+                if lancamento_id:
+                    client.table("lancamentos_previstos").update(
+                        {"status": "pago", "data_pagamento": (dados.data_pagamento or hoje.isoformat())[:10]}
+                    ).eq("id", lancamento_id).execute()
+                    resultados.append({"Arquivo": arquivo.name, "Valor lido": valor_lido, "Resultado": "✅ vinculado e marcado como pago"})
+                else:
+                    resultados.append(
+                        {"Arquivo": arquivo.name, "Valor lido": valor_lido, "Resultado": "⚠️ salvo sem vínculo — revise manualmente"}
+                    )
+
+        st.dataframe(resultados, use_container_width=True, hide_index=True)
+        st.success(f"{len(comprovantes)} comprovante(s) processado(s).")
 
 st.divider()
 st.subheader("Novo lançamento")
