@@ -27,8 +27,8 @@ empresas_por_id = {e["id"]: e["nome"] for e in empresas}
 
 col1, col2, col3 = st.columns(3)
 empresa_id = col1.selectbox("Empresa", options=["Todas"] + list(empresas_por_id.keys()), format_func=lambda i: "Todas" if i == "Todas" else empresas_por_id[i])
-data_inicio = col2.date_input("Período - de", value=date(date.today().year, 1, 1))
-data_fim = col3.date_input("Período - até", value=date.today())
+data_inicio = col2.date_input("Período - de", value=date(date.today().year, 1, 1), format="DD/MM/YYYY")
+data_fim = col3.date_input("Período - até", value=date.today(), format="DD/MM/YYYY")
 
 st.divider()
 st.header("DRE — Demonstrativo de Resultado")

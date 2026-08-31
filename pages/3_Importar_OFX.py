@@ -4,6 +4,7 @@ import streamlit as st
 from postgrest.exceptions import APIError
 
 from db import get_client
+from formatacao import data_br, moeda
 from ofx_parser import decode_ofx_bytes, parse_ofx
 from regras_identificacao import sugerir
 
@@ -86,7 +87,10 @@ if sem_conta_cadastrada:
     )
 
 st.dataframe(
-    [{k: v for k, v in linha.items() if not k.startswith("_")} for linha in linhas],
+    [
+        {**{k: v for k, v in linha.items() if not k.startswith("_")}, "Data": data_br(linha["Data"]), "Valor": moeda(linha["Valor"])}
+        for linha in linhas
+    ],
     use_container_width=True,
     hide_index=True,
 )

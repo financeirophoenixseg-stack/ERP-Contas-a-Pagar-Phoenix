@@ -7,7 +7,7 @@ import streamlit as st
 import leitor_boleto
 import sharepoint
 from db import get_client
-from formatacao import moeda
+from formatacao import data_br, moeda
 from lancamentos import ParcelaGerada, gerar_parcelas, gerar_recorrencia
 
 BUCKET_ANEXOS = "anexos"
@@ -72,11 +72,14 @@ else:
         valor_confirmado = c1.number_input(
             "Valor (R$)", min_value=0.0, step=0.01, format="%.2f", value=float(dados.valor or 0), key="valor_boleto_ia"
         )
+        c1.caption(moeda(valor_confirmado))
         try:
             venc_padrao = date.fromisoformat(dados.data_vencimento) if dados.data_vencimento else date.today()
         except ValueError:
             venc_padrao = date.today()
-        vencimento_confirmado = c2.date_input("Vencimento", value=venc_padrao, key="vencimento_boleto_ia")
+        vencimento_confirmado = c2.date_input(
+            "Vencimento", value=venc_padrao, format="DD/MM/YYYY", key="vencimento_boleto_ia"
+        )
         descricao_confirmada = st.text_input("Descrição", value=dados.descricao or "", key="descricao_boleto_ia")
         empresa_boleto_id = st.selectbox(
             "Empresa", options=list(empresas_por_id.keys()), format_func=lambda i: empresas_por_id[i], key="empresa_boleto_ia"
@@ -218,7 +221,8 @@ parcelas_preview = []
 if modo == "Avulso":
     c1, c2 = st.columns(2)
     valor = c1.number_input("Valor (R$)", min_value=0.0, step=0.01, format="%.2f")
-    data_vencimento = c2.date_input("Data de vencimento", value=date.today())
+    c1.caption(moeda(valor))
+    data_vencimento = c2.date_input("Data de vencimento", value=date.today(), format="DD/MM/YYYY")
     if valor > 0:
         parcelas_preview = [
             ParcelaGerada(parcela_atual=None, parcela_total=None, valor=valor, data_vencimento=data_vencimento)
@@ -226,14 +230,16 @@ if modo == "Avulso":
 elif modo == "Parcelado":
     c1, c2, c3 = st.columns(3)
     valor_total = c1.number_input("Valor total (R$)", min_value=0.0, step=0.01, format="%.2f")
+    c1.caption(moeda(valor_total))
     num_parcelas = c2.number_input("Número de parcelas", min_value=1, step=1, value=2)
-    data_primeira = c3.date_input("Vencimento da 1ª parcela", value=date.today())
+    data_primeira = c3.date_input("Vencimento da 1ª parcela", value=date.today(), format="DD/MM/YYYY")
     if valor_total > 0:
         parcelas_preview = gerar_parcelas(valor_total, int(num_parcelas), data_primeira)
 else:
     c1, c2, c3 = st.columns(3)
     valor_mensal = c1.number_input("Valor mensal (R$)", min_value=0.0, step=0.01, format="%.2f")
-    data_primeiro_vencimento = c2.date_input("1º vencimento", value=date.today())
+    c1.caption(moeda(valor_mensal))
+    data_primeiro_vencimento = c2.date_input("1º vencimento", value=date.today(), format="DD/MM/YYYY")
     meses_a_gerar = c3.number_input("Gerar quantos meses à frente?", min_value=1, step=1, value=12)
     if valor_mensal > 0:
         parcelas_preview = gerar_recorrencia(valor_mensal, data_primeiro_vencimento, int(meses_a_gerar))
@@ -241,7 +247,7 @@ else:
 if parcelas_preview:
     st.caption(f"Prévia: {len(parcelas_preview)} lançamento(s) serão criados.")
     st.dataframe(
-        [{"Parcela": f"{p.parcela_atual}/{p.parcela_total}" if p.parcela_atual else "-", "Vencimento": p.data_vencimento, "Valor": moeda(p.valor)} for p in parcelas_preview],
+        [{"Parcela": f"{p.parcela_atual}/{p.parcela_total}" if p.parcela_atual else "-", "Vencimento": data_br(p.data_vencimento), "Valor": moeda(p.valor)} for p in parcelas_preview],
         use_container_width=True,
         hide_index=True,
     )
@@ -414,7 +420,7 @@ def _tabela(tipo_filtro: str, titulo: str):
         terceiro = (item.get("clientes") or {}).get("nome") or (item.get("fornecedores") or {}).get("nome") or "-"
         linhas.append(
             {
-                "Vencimento": item["data_vencimento"],
+                "Vencimento": data_br(item["data_vencimento"]),
                 "Descrição": item["descricao"],
                 "Cliente/Fornecedor": terceiro,
                 "Valor": moeda(item["valor"]),
@@ -425,7 +431,7 @@ def _tabela(tipo_filtro: str, titulo: str):
 
     pendentes = [i for i in itens if i["status"] == "previsto"]
     if pendentes:
-        opcoes = {i["id"]: f"{i['data_vencimento']} — {i['descricao']} — {moeda(i['valor'])}" for i in pendentes}
+        opcoes = {i["id"]: f"{data_br(i['data_vencimento'])} — {i['descricao']} — {moeda(i['valor'])}" for i in pendentes}
         col_a, col_b, col_c = st.columns([3, 1, 1])
         selecionado = col_a.selectbox("Ação rápida em:", options=list(opcoes.keys()), format_func=lambda i: opcoes[i], key=f"sel_{tipo_filtro}")
         if col_b.button("Marcar como pago", key=f"pago_{tipo_filtro}"):
@@ -439,7 +445,7 @@ def _tabela(tipo_filtro: str, titulo: str):
             st.success("Cancelado.")
             st.rerun()
 
-    opcoes_anexo = {i["id"]: f"{i['data_vencimento']} — {i['descricao']} — {moeda(i['valor'])} ({i['status']})" for i in itens}
+    opcoes_anexo = {i["id"]: f"{data_br(i['data_vencimento'])} — {i['descricao']} — {moeda(i['valor'])} ({i['status']})" for i in itens}
     lancamento_anexo_id = st.selectbox(
         "Anexos de:", options=list(opcoes_anexo.keys()), format_func=lambda i: opcoes_anexo[i], key=f"sel_anexo_{tipo_filtro}"
     )
@@ -466,8 +472,8 @@ if not anexos_globais:
 else:
     for a in anexos_globais:
         vinculo = a.get("lancamentos_previstos")
-        rotulo = f"{vinculo['descricao']} ({vinculo['data_vencimento']})" if vinculo else "sem vínculo a nenhum lançamento"
-        with st.expander(f"📎 {a['created_at'][:10]} — {a['tipo']} — {a['nome_arquivo']} — {rotulo}"):
+        rotulo = f"{vinculo['descricao']} ({data_br(vinculo['data_vencimento'])})" if vinculo else "sem vínculo a nenhum lançamento"
+        with st.expander(f"📎 {data_br(a['created_at'])} — {a['tipo']} — {a['nome_arquivo']} — {rotulo}"):
             try:
                 conteudo = client.storage.from_(BUCKET_ANEXOS).download(a["storage_path"])
                 st.download_button("Baixar", data=conteudo, file_name=a["nome_arquivo"], key=f"global_baixar_{a['id']}")

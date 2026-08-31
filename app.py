@@ -3,7 +3,7 @@ from datetime import date
 import streamlit as st
 
 from db import get_client
-from formatacao import moeda
+from formatacao import data_br, moeda
 
 st.set_page_config(page_title="ERP Phoenix/Vizentim", layout="wide")
 
@@ -67,7 +67,7 @@ if alertas:
     st.divider()
     st.subheader(f"⚠️ {len(alertas)} alerta(s) de auditoria não resolvido(s)")
     st.dataframe(
-        [{"Data": a["created_at"][:10], "Tipo": a["tipo"], "Descrição": a["descricao"]} for a in alertas],
+        [{"Data": data_br(a["created_at"]), "Tipo": a["tipo"], "Descrição": a["descricao"]} for a in alertas],
         use_container_width=True,
         hide_index=True,
     )

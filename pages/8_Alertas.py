@@ -3,7 +3,7 @@ from datetime import date
 import streamlit as st
 
 from db import get_client
-from formatacao import moeda
+from formatacao import data_br, moeda
 
 st.set_page_config(page_title="Alertas", layout="wide")
 st.title("Alertas")
@@ -32,7 +32,7 @@ if not alertas:
 else:
     for a in alertas:
         icone = "✅" if a["resolvido"] else "⚠️"
-        with st.expander(f"{icone} {a['created_at'][:10]} — {a['tipo']} — {a['descricao'][:80]}"):
+        with st.expander(f"{icone} {data_br(a['created_at'])} — {a['tipo']} — {a['descricao'][:80]}"):
             st.write(a["descricao"])
             if not a["resolvido"] and st.button("Marcar como resolvido", key=f"resolver_{a['id']}"):
                 client.table("auditoria_alertas").update({"resolvido": True}).eq("id", a["id"]).execute()
@@ -59,7 +59,7 @@ def _linha_atrasada(v: dict) -> dict:
     dias = (hoje_data - date.fromisoformat(v["data_vencimento"])).days
     terceiro = (v.get("clientes") or {}).get("nome") or (v.get("fornecedores") or {}).get("nome") or "-"
     return {
-        "Vencimento": v["data_vencimento"],
+        "Vencimento": data_br(v["data_vencimento"]),
         "Dias em atraso": dias,
         "Empresa": (v.get("empresas") or {}).get("nome"),
         "Cliente/Fornecedor": terceiro,

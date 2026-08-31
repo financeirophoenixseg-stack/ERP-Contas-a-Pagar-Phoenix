@@ -1,7 +1,7 @@
 import streamlit as st
 
 from db import get_client
-from formatacao import moeda
+from formatacao import data_br, moeda
 
 st.set_page_config(page_title="Pesquisa por Cliente", layout="wide")
 st.title("Pesquisa por cliente")
@@ -51,7 +51,7 @@ if movimentacoes:
     st.dataframe(
         [
             {
-                "Data": (m.get("lotes_comissao") or {}).get("data_pagamento"),
+                "Data": data_br((m.get("lotes_comissao") or {}).get("data_pagamento")),
                 "Seguradora": ((m.get("lotes_comissao") or {}).get("seguradoras") or {}).get("nome"),
                 "Apólice": m["apolice"],
                 "Parcela": m["parcela"],
@@ -83,7 +83,7 @@ if lancamentos:
     st.dataframe(
         [
             {
-                "Vencimento": l["data_vencimento"],
+                "Vencimento": data_br(l["data_vencimento"]),
                 "Tipo": l["tipo"],
                 "Descrição": l["descricao"],
                 "Parcela": f"{l['parcela_atual']}/{l['parcela_total']}" if l["parcela_atual"] else "-",

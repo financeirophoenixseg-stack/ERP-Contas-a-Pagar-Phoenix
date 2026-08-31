@@ -1,4 +1,6 @@
-from formatacao import moeda
+from datetime import date
+
+from formatacao import data_br, moeda
 
 
 def test_moeda_formato_brasileiro():
@@ -14,3 +16,21 @@ def test_moeda_valores_ausentes():
 
 def test_moeda_valor_negativo():
     assert moeda(-150.5) == "R$ -150,50"
+
+
+def test_data_br_string_iso():
+    assert data_br("2026-08-31") == "31/08/2026"
+    assert data_br("2026-08-31T00:00:00") == "31/08/2026"
+
+
+def test_data_br_objeto_date():
+    assert data_br(date(2026, 8, 31)) == "31/08/2026"
+
+
+def test_data_br_ausente():
+    assert data_br(None) == "-"
+    assert data_br("") == "-"
+
+
+def test_data_br_texto_nao_reconhecido_volta_como_esta():
+    assert data_br("sem vínculo") == "sem vínculo"
