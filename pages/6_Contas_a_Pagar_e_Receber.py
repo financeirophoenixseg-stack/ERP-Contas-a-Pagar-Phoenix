@@ -7,6 +7,7 @@ import streamlit as st
 import leitor_boleto
 import sharepoint
 from db import get_client
+from formatacao import moeda
 from lancamentos import ParcelaGerada, gerar_parcelas, gerar_recorrencia
 
 BUCKET_ANEXOS = "anexos"
@@ -240,7 +241,7 @@ else:
 if parcelas_preview:
     st.caption(f"Prévia: {len(parcelas_preview)} lançamento(s) serão criados.")
     st.dataframe(
-        [{"Parcela": f"{p.parcela_atual}/{p.parcela_total}" if p.parcela_atual else "-", "Vencimento": p.data_vencimento, "Valor": p.valor} for p in parcelas_preview],
+        [{"Parcela": f"{p.parcela_atual}/{p.parcela_total}" if p.parcela_atual else "-", "Vencimento": p.data_vencimento, "Valor": moeda(p.valor)} for p in parcelas_preview],
         use_container_width=True,
         hide_index=True,
     )
@@ -416,7 +417,7 @@ def _tabela(tipo_filtro: str, titulo: str):
                 "Vencimento": item["data_vencimento"],
                 "Descrição": item["descricao"],
                 "Cliente/Fornecedor": terceiro,
-                "Valor": item["valor"],
+                "Valor": moeda(item["valor"]),
                 "Situação": situacao,
             }
         )
@@ -424,7 +425,7 @@ def _tabela(tipo_filtro: str, titulo: str):
 
     pendentes = [i for i in itens if i["status"] == "previsto"]
     if pendentes:
-        opcoes = {i["id"]: f"{i['data_vencimento']} — {i['descricao']} — R$ {i['valor']:.2f}" for i in pendentes}
+        opcoes = {i["id"]: f"{i['data_vencimento']} — {i['descricao']} — {moeda(i['valor'])}" for i in pendentes}
         col_a, col_b, col_c = st.columns([3, 1, 1])
         selecionado = col_a.selectbox("Ação rápida em:", options=list(opcoes.keys()), format_func=lambda i: opcoes[i], key=f"sel_{tipo_filtro}")
         if col_b.button("Marcar como pago", key=f"pago_{tipo_filtro}"):
@@ -438,7 +439,7 @@ def _tabela(tipo_filtro: str, titulo: str):
             st.success("Cancelado.")
             st.rerun()
 
-    opcoes_anexo = {i["id"]: f"{i['data_vencimento']} — {i['descricao']} — R$ {i['valor']:.2f} ({i['status']})" for i in itens}
+    opcoes_anexo = {i["id"]: f"{i['data_vencimento']} — {i['descricao']} — {moeda(i['valor'])} ({i['status']})" for i in itens}
     lancamento_anexo_id = st.selectbox(
         "Anexos de:", options=list(opcoes_anexo.keys()), format_func=lambda i: opcoes_anexo[i], key=f"sel_anexo_{tipo_filtro}"
     )

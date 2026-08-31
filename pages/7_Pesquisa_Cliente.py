@@ -1,6 +1,7 @@
 import streamlit as st
 
 from db import get_client
+from formatacao import moeda
 
 st.set_page_config(page_title="Pesquisa por Cliente", layout="wide")
 st.title("Pesquisa por cliente")
@@ -46,7 +47,7 @@ st.divider()
 st.subheader(f"Movimentações de comissão ({len(movimentacoes)})")
 if movimentacoes:
     total = sum(m["valor_comissao"] for m in movimentacoes)
-    st.metric("Total líquido de comissões (histórico)", f"R$ {total:,.2f}")
+    st.metric("Total líquido de comissões (histórico)", moeda(total))
     st.dataframe(
         [
             {
@@ -56,7 +57,7 @@ if movimentacoes:
                 "Parcela": m["parcela"],
                 "Tipo": m["tipo"],
                 "% Comissão": m["percentual_comissao"],
-                "Valor Comissão": m["valor_comissao"],
+                "Valor Comissão": moeda(m["valor_comissao"]),
             }
             for m in movimentacoes
         ],
@@ -86,7 +87,7 @@ if lancamentos:
                 "Tipo": l["tipo"],
                 "Descrição": l["descricao"],
                 "Parcela": f"{l['parcela_atual']}/{l['parcela_total']}" if l["parcela_atual"] else "-",
-                "Valor": l["valor"],
+                "Valor": moeda(l["valor"]),
                 "Situação": l["status"],
             }
             for l in lancamentos

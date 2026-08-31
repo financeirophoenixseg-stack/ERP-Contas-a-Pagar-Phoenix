@@ -1,6 +1,7 @@
 import streamlit as st
 
 from db import get_client
+from formatacao import moeda
 from regras_identificacao import sugerir
 
 st.set_page_config(page_title="Classificar Lançamentos", layout="wide")
@@ -47,7 +48,7 @@ st.caption(f"{len(pendentes)} lançamento(s) pendente(s).")
 for txn in pendentes:
     conta_bancaria = txn.get("contas_bancarias") or {}
     empresa_nome = (conta_bancaria.get("empresas") or {}).get("nome", "?")
-    titulo = f"{txn['data']} — R$ {txn['valor']:.2f} — {txn['descricao'] or 'sem descrição'} ({empresa_nome})"
+    titulo = f"{txn['data']} — {moeda(txn['valor'])} — {txn['descricao'] or 'sem descrição'} ({empresa_nome})"
 
     with st.expander(titulo):
         sugestao = sugerir(regras, txn["descricao"])

@@ -3,6 +3,7 @@ from datetime import date
 import streamlit as st
 
 from db import get_client
+from formatacao import moeda
 from relatorios import LinhaDRE, montar_balanco, montar_dre
 
 st.set_page_config(page_title="DRE e Balanço", layout="wide")
@@ -99,16 +100,16 @@ for txn in query.execute().data or []:
 dre = montar_dre(linhas_dre)
 
 col1, col2, col3 = st.columns(3)
-col1.metric("Receitas", f"R$ {dre['total_receitas']:,.2f}")
-col2.metric("Despesas", f"R$ {dre['total_despesas']:,.2f}")
-col3.metric("Resultado", f"R$ {dre['resultado']:,.2f}")
+col1.metric("Receitas", moeda(dre["total_receitas"]))
+col2.metric("Despesas", moeda(dre["total_despesas"]))
+col3.metric("Resultado", moeda(dre["resultado"]))
 
 col_a, col_b = st.columns(2)
 with col_a:
     st.subheader("Receitas")
     if dre["receitas"]:
         st.dataframe(
-            [{"Categoria": k, "Valor": v} for k, v in dre["receitas"].items()],
+            [{"Categoria": k, "Valor": moeda(v)} for k, v in dre["receitas"].items()],
             use_container_width=True, hide_index=True,
         )
     else:
@@ -117,7 +118,7 @@ with col_b:
     st.subheader("Despesas")
     if dre["despesas"]:
         st.dataframe(
-            [{"Categoria": k, "Valor": v} for k, v in dre["despesas"].items()],
+            [{"Categoria": k, "Valor": moeda(v)} for k, v in dre["despesas"].items()],
             use_container_width=True, hide_index=True,
         )
     else:
@@ -148,14 +149,14 @@ contas_a_pagar = sum(r["valor"] for r in query_pagar.execute().data or [])
 balanco = montar_balanco(caixa, contas_a_receber, contas_a_pagar)
 
 col1, col2, col3 = st.columns(3)
-col1.metric("Total Ativo", f"R$ {balanco['total_ativo']:,.2f}")
-col2.metric("Total Passivo", f"R$ {balanco['total_passivo']:,.2f}")
-col3.metric("Patrimônio Líquido", f"R$ {balanco['patrimonio_liquido']:,.2f}")
+col1.metric("Total Ativo", moeda(balanco["total_ativo"]))
+col2.metric("Total Passivo", moeda(balanco["total_passivo"]))
+col3.metric("Patrimônio Líquido", moeda(balanco["patrimonio_liquido"]))
 
 col_a, col_b = st.columns(2)
 with col_a:
     st.subheader("Ativo")
-    st.dataframe([{"Conta": k, "Valor": v} for k, v in balanco["ativo"].items()], use_container_width=True, hide_index=True)
+    st.dataframe([{"Conta": k, "Valor": moeda(v)} for k, v in balanco["ativo"].items()], use_container_width=True, hide_index=True)
 with col_b:
     st.subheader("Passivo")
-    st.dataframe([{"Conta": k, "Valor": v} for k, v in balanco["passivo"].items()], use_container_width=True, hide_index=True)
+    st.dataframe([{"Conta": k, "Valor": moeda(v)} for k, v in balanco["passivo"].items()], use_container_width=True, hide_index=True)

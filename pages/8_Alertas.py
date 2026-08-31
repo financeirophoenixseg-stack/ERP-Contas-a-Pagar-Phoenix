@@ -3,6 +3,7 @@ from datetime import date
 import streamlit as st
 
 from db import get_client
+from formatacao import moeda
 
 st.set_page_config(page_title="Alertas", layout="wide")
 st.title("Alertas")
@@ -71,18 +72,22 @@ atrasadas_pagar = [_linha_atrasada(v) for v in vencidos if v["tipo"] == "pagar"]
 atrasadas_receber = [_linha_atrasada(v) for v in vencidos if v["tipo"] == "receber"]
 
 col1, col2 = st.columns(2)
-col1.metric("Total atrasado a pagar", f"R$ {sum(l['Valor'] for l in atrasadas_pagar):,.2f}", f"{len(atrasadas_pagar)} conta(s)")
-col2.metric("Total atrasado a receber", f"R$ {sum(l['Valor'] for l in atrasadas_receber):,.2f}", f"{len(atrasadas_receber)} conta(s)")
+col1.metric("Total atrasado a pagar", moeda(sum(l["Valor"] for l in atrasadas_pagar)), f"{len(atrasadas_pagar)} conta(s)")
+col2.metric("Total atrasado a receber", moeda(sum(l["Valor"] for l in atrasadas_receber)), f"{len(atrasadas_receber)} conta(s)")
 
 st.subheader("A pagar — atrasadas")
 if atrasadas_pagar:
-    st.dataframe(atrasadas_pagar, use_container_width=True, hide_index=True)
+    st.dataframe(
+        [{**l, "Valor": moeda(l["Valor"])} for l in atrasadas_pagar], use_container_width=True, hide_index=True
+    )
 else:
     st.info("Nenhuma conta a pagar atrasada.")
 
 st.subheader("A receber — atrasadas")
 if atrasadas_receber:
-    st.dataframe(atrasadas_receber, use_container_width=True, hide_index=True)
+    st.dataframe(
+        [{**l, "Valor": moeda(l["Valor"])} for l in atrasadas_receber], use_container_width=True, hide_index=True
+    )
 else:
     st.info("Nenhuma conta a receber atrasada.")
 

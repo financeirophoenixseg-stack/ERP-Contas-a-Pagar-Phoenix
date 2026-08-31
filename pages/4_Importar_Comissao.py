@@ -9,6 +9,7 @@ import streamlit as st
 from classificacao_comissao import classificar, parcelas_restantes
 from regra_suhai import bate_com_formula, parcelas_enquadradas
 from db import get_client
+from formatacao import moeda
 from lancamentos import gerar_recorrencia, somar_meses
 from parsers import PARSERS, identificar_seguradora
 
@@ -67,8 +68,8 @@ if not lote.linhas:
 
 col1, col2, col3 = st.columns(3)
 col1.metric("Data de pagamento", lote.data_pagamento or "?")
-col2.metric("Valor bruto (tributário)", f"R$ {lote.valor_bruto:,.2f}")
-col3.metric("Valor líquido", f"R$ {lote.valor_liquido:,.2f}")
+col2.metric("Valor bruto (tributário)", moeda(lote.valor_bruto))
+col3.metric("Valor líquido", moeda(lote.valor_liquido))
 identificador = (
     f"CNPJ: {lote.cnpj}" if lote.cnpj
     else f"SUSEP: {lote.susep}" if lote.susep
@@ -163,8 +164,8 @@ st.dataframe(
             "Parcela": l.parcela,
             "% Comissão": l.percentual_comissao,
             "Tipo": l.tipo,
-            "Valor Parcela": l.valor_parcela,
-            "Valor Comissão": l.valor_comissao,
+            "Valor Parcela": moeda(l.valor_parcela),
+            "Valor Comissão": moeda(l.valor_comissao),
         }
         for l in lote.linhas
     ],
@@ -286,7 +287,7 @@ if st.button("Confirmar importação", type="primary"):
                 "tipo": "empresa_divergente",
                 "descricao": (
                     f"Comissão da empresa '{empresa_id}' (lote {lote.data_pagamento}, "
-                    f"R$ {lote.valor_liquido:.2f}) encontrada em conta bancária de outra empresa."
+                    f"{moeda(lote.valor_liquido)}) encontrada em conta bancária de outra empresa."
                 ),
                 "lote_id": lote_id,
             }

@@ -3,6 +3,7 @@ from datetime import date
 import streamlit as st
 
 from db import get_client
+from formatacao import moeda
 
 st.set_page_config(page_title="ERP Phoenix/Vizentim", layout="wide")
 
@@ -34,17 +35,17 @@ a_pagar_vencido = [p for p in a_pagar if p["data_vencimento"] < hoje]
 a_receber_vencido = [p for p in a_receber if p["data_vencimento"] < hoje]
 
 col1, col2, col3, col4 = st.columns(4)
-col1.metric("A pagar (previsto)", f"R$ {sum(p['valor'] for p in a_pagar):,.2f}", f"{len(a_pagar)} lançamento(s)")
+col1.metric("A pagar (previsto)", moeda(sum(p["valor"] for p in a_pagar)), f"{len(a_pagar)} lançamento(s)")
 col2.metric(
     "A pagar vencido",
-    f"R$ {sum(p['valor'] for p in a_pagar_vencido):,.2f}",
+    moeda(sum(p["valor"] for p in a_pagar_vencido)),
     f"{len(a_pagar_vencido)} lançamento(s)",
     delta_color="inverse",
 )
-col3.metric("A receber (previsto)", f"R$ {sum(p['valor'] for p in a_receber):,.2f}", f"{len(a_receber)} lançamento(s)")
+col3.metric("A receber (previsto)", moeda(sum(p["valor"] for p in a_receber)), f"{len(a_receber)} lançamento(s)")
 col4.metric(
     "A receber vencido",
-    f"R$ {sum(p['valor'] for p in a_receber_vencido):,.2f}",
+    moeda(sum(p["valor"] for p in a_receber_vencido)),
     f"{len(a_receber_vencido)} lançamento(s)",
     delta_color="inverse",
 )
@@ -57,9 +58,9 @@ for l in lotes:
     por_status.setdefault(l["status"], []).append(l)
 
 col1, col2, col3 = st.columns(3)
-col1.metric("Comissões conciliadas", len(por_status["conciliado"]), f"R$ {sum(l['valor_liquido'] for l in por_status['conciliado']):,.2f}")
-col2.metric("Comissões pendentes", len(por_status["pendente"]), f"R$ {sum(l['valor_liquido'] for l in por_status['pendente']):,.2f}")
-col3.metric("Comissões divergentes ⚠️", len(por_status["divergente"]), f"R$ {sum(l['valor_liquido'] for l in por_status['divergente']):,.2f}")
+col1.metric("Comissões conciliadas", len(por_status["conciliado"]), moeda(sum(l["valor_liquido"] for l in por_status["conciliado"])))
+col2.metric("Comissões pendentes", len(por_status["pendente"]), moeda(sum(l["valor_liquido"] for l in por_status["pendente"])))
+col3.metric("Comissões divergentes ⚠️", len(por_status["divergente"]), moeda(sum(l["valor_liquido"] for l in por_status["divergente"])))
 
 alertas = client.table("auditoria_alertas").select("id, tipo, descricao, created_at").eq("resolvido", False).order("created_at", desc=True).execute().data or []
 if alertas:
