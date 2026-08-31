@@ -43,6 +43,13 @@ def test_encontrar_lancamento_casamento_unico():
     assert resultado == "abc-123"
 
 
+def test_encontrar_lancamento_pagamento_atrasado_dentro_da_margem():
+    # caso real observado: pagamento 4 dias após o vencimento (dentro dos +-7 dias)
+    client = _client_com_candidatos([{"id": "abc-123", "valor": 500.0, "data_vencimento": "2026-08-23"}])
+    resultado = leitor_comprovante.encontrar_lancamento_correspondente(client, 500.0, "2026-08-27")
+    assert resultado == "abc-123"
+
+
 def test_encontrar_lancamento_sem_candidato():
     client = _client_com_candidatos([])
     resultado = leitor_comprovante.encontrar_lancamento_correspondente(client, 1000.0, "2026-08-27")

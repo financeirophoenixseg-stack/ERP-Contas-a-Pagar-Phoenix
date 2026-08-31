@@ -1,3 +1,4 @@
+import hashlib
 import uuid
 from datetime import date
 from pathlib import Path
@@ -12,6 +13,18 @@ from formatacao import data_br, moeda, parse_valor
 from lancamentos import ParcelaGerada, gerar_parcelas, gerar_recorrencia
 
 BUCKET_ANEXOS = "anexos"
+
+
+def _hash_arquivo(conteudo: bytes) -> str:
+    return hashlib.sha256(conteudo).hexdigest()
+
+
+def _anexo_duplicado(client, hash_valor: str) -> dict | None:
+    """Retorna o anexo já existente com esse hash (mesmo arquivo enviado
+    antes), ou None se for novo. Anexos antigos sem hash calculado (coluna
+    null) nunca colidem — null nunca é igual a null em SQL."""
+    existentes = client.table("anexos").select("id, nome_arquivo, created_at").eq("hash_arquivo", hash_valor).execute().data
+    return existentes[0] if existentes else None
 
 
 def _campo_valor(coluna, label: str, key: str, valor_inicial: float = 0.0) -> float:
@@ -168,6 +181,7 @@ else:
                         "tipo": "boleto",
                         "nome_arquivo": arquivo_info["nome"],
                         "storage_path": caminho_storage,
+                        "hash_arquivo": _hash_arquivo(arquivo_info["conteudo"]),
                     }
                 ).execute()
                 if sharepoint.esta_configurado():
@@ -211,6 +225,19 @@ else:
             for arquivo in comprovantes:
                 conteudo = arquivo.getvalue()
                 hoje = date.today()
+                hash_valor = _hash_arquivo(conteudo)
+
+                duplicado = _anexo_duplicado(client, hash_valor)
+                if duplicado:
+                    resultados.append(
+                        {
+                            "Arquivo": arquivo.name,
+                            "Valor lido": "-",
+                            "Resultado": f"⏭️ já enviado antes ({data_br(duplicado['created_at'])}) — ignorado",
+                        }
+                    )
+                    continue
+
                 # nome do upload não é confiável — usa só o nome do arquivo, sem componentes de diretório.
                 nome_seguro = f"{uuid.uuid4().hex}_{Path(arquivo.name).name}"
                 caminho_storage = f"{hoje.year}/{hoje.month:02d}/comprovante/{nome_seguro}"
@@ -237,6 +264,7 @@ else:
                             "tipo": "comprovante",
                             "nome_arquivo": arquivo.name,
                             "storage_path": caminho_storage,
+                            "hash_arquivo": hash_valor,
                         }
                     ).execute()
                     if sharepoint.esta_configurado():
@@ -399,6 +427,7 @@ if st.button("Cadastrar", type="primary", disabled=not parcelas_preview or not d
                     "tipo": "boleto",
                     "nome_arquivo": arquivo_anexo.name,
                     "storage_path": caminho_storage,
+                    "hash_arquivo": _hash_arquivo(arquivo_anexo.getvalue()),
                 }
             ).execute()
             st.success(f"Anexo '{arquivo_anexo.name}' vinculado ao lançamento.")
@@ -468,6 +497,7 @@ def _secao_anexos(lancamento_id: str, key_prefix: str):
                     "tipo": tipo_novo_anexo.lower(),
                     "nome_arquivo": novo_arquivo.name,
                     "storage_path": caminho_storage,
+                    "hash_arquivo": _hash_arquivo(novo_arquivo.getvalue()),
                 }
             ).execute()
             st.success(f"Anexo '{novo_arquivo.name}' salvo.")

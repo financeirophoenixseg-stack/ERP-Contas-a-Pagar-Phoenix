@@ -205,6 +205,7 @@ create table anexos (
     tipo text not null,          -- 'boleto' | 'comprovante' | 'outro'
     nome_arquivo text not null,
     storage_path text not null,  -- caminho dentro do bucket "anexos"
+    hash_arquivo text unique,    -- detecta reenvio do mesmo arquivo (null em anexos antigos, sem problema)
     created_at timestamptz not null default now()
 );
 

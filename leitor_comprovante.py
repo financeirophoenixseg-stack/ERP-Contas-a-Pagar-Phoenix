@@ -39,7 +39,10 @@ Campos do JSON (todos obrigatórios, use null quando não encontrar):
 Responda SOMENTE o JSON, sem markdown, sem explicação."""
 
 TOLERANCIA_VALOR = 0.01
-TOLERANCIA_DIAS = 3
+# pagamento acontece raramente no dia exato do vencimento (empresas costumam
+# pagar em lote, um pouco antes ou alguns dias depois) — 3 dias já deixou de
+# fora um caso real de pagamento 4 dias após o vencimento, por isso 7.
+TOLERANCIA_DIAS = 7
 
 
 @dataclass
