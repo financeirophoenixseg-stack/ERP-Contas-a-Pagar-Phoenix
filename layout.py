@@ -76,6 +76,14 @@ h1, h2, h3 { font-family: 'Manrope', sans-serif; letter-spacing: -0.01em; }
     box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
 }
 
+/* Containers com borda (st.container(border=True)) — mesma cara de cartão,
+   usado em telas com um bloco por item (ex.: Classificar Lançamentos) */
+[data-testid="stVerticalBlockBorderWrapper"] {
+    border: 1px solid #E3E8F0 !important;
+    border-radius: 12px !important;
+    box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+}
+
 /* Tabelas com cantos arredondados e borda consistente com o resto */
 [data-testid="stDataFrame"] {
     border: 1px solid #E3E8F0;
