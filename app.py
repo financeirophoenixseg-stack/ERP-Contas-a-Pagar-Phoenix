@@ -2,10 +2,12 @@ from datetime import date
 
 import streamlit as st
 
+import layout
 from db import get_client
 from formatacao import data_br, moeda
 
 st.set_page_config(page_title="ERP Phoenix/Vizentim", layout="wide")
+layout.aplicar_logo()
 
 st.title("ERP Phoenix / Vizentim — Dashboard")
 st.caption("Visão geral. Use o menu à esquerda para navegar entre os módulos.")

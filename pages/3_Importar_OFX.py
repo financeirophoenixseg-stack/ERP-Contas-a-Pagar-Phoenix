@@ -3,12 +3,14 @@ import hashlib
 import streamlit as st
 from postgrest.exceptions import APIError
 
+import layout
 from db import get_client
 from formatacao import data_br, moeda
 from ofx_parser import decode_ofx_bytes, parse_ofx
 from regras_identificacao import sugerir
 
 st.set_page_config(page_title="Importar OFX", layout="wide")
+layout.aplicar_logo()
 st.title("Importar extrato OFX")
 st.caption(
     "A empresa é identificada automaticamente pela combinação banco + agência + conta."

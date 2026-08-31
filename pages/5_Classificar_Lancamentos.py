@@ -1,10 +1,12 @@
 import streamlit as st
 
+import layout
 from db import get_client
 from formatacao import moeda
 from regras_identificacao import sugerir
 
 st.set_page_config(page_title="Classificar Lançamentos", layout="wide")
+layout.aplicar_logo()
 st.title("Classificar lançamentos")
 st.caption(
     "Transações bancárias que não bateram com nenhuma comissão. Classifique como "

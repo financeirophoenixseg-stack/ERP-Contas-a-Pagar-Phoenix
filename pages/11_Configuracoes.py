@@ -1,10 +1,12 @@
 import streamlit as st
 import streamlit.components.v1 as components
 
+import layout
 import pluggy_integration
 from db import get_client
 
 st.set_page_config(page_title="Configurações", layout="wide")
+layout.aplicar_logo()
 st.title("Configurações")
 st.caption("Tudo que configura o sistema: cadastros, regras de comissão e de identificação automática.")
 
@@ -24,6 +26,7 @@ except RuntimeError as e:
     aba_regras_comissao,
     aba_regras_identificacao,
     aba_apolice_clientes,
+    aba_aparencia,
 ) = st.tabs(
     [
         "Empresas",
@@ -35,6 +38,7 @@ except RuntimeError as e:
         "Regras de Comissão",
         "Regras de Identificação",
         "Apólice → Cliente",
+        "Aparência",
     ]
 )
 
@@ -594,3 +598,47 @@ with aba_apolice_clientes:
             st.rerun()
     else:
         st.info("Nenhum mapeamento cadastrado ainda.")
+
+with aba_aparencia:
+    st.subheader("Logo do sistema")
+    st.caption(
+        "Aparece no topo do menu lateral, em todas as telas. Envie uma imagem (PNG com fundo "
+        "transparente fica melhor) — a mais recente sempre substitui a anterior."
+    )
+
+    try:
+        arquivos_logo = client.storage.from_(layout.BUCKET_ASSETS).list()
+    except Exception as e:
+        arquivos_logo = []
+        st.warning(f"Não consegui checar a logo atual (bucket '{layout.BUCKET_ASSETS}' existe no Storage?): {e}")
+
+    logo_existe = any(a["name"] == layout.CAMINHO_LOGO for a in (arquivos_logo or []))
+    if logo_existe:
+        try:
+            url_logo_atual = client.storage.from_(layout.BUCKET_ASSETS).get_public_url(layout.CAMINHO_LOGO)
+            st.image(url_logo_atual, width=200, caption="Logo atual")
+        except Exception:
+            st.caption("Logo cadastrada, mas não consegui pré-visualizar.")
+    else:
+        st.caption("Nenhuma logo enviada ainda — o menu lateral fica só com o nome do sistema.")
+
+    nova_logo = st.file_uploader("Nova logo", type=["png", "jpg", "jpeg"], key="upload_logo")
+    if nova_logo is not None and st.button("Salvar logo", type="primary"):
+        try:
+            conteudo_logo = nova_logo.getvalue()
+            content_type = nova_logo.type or "image/png"
+            if logo_existe:
+                client.storage.from_(layout.BUCKET_ASSETS).update(
+                    layout.CAMINHO_LOGO, conteudo_logo, {"content-type": content_type}
+                )
+            else:
+                client.storage.from_(layout.BUCKET_ASSETS).upload(
+                    layout.CAMINHO_LOGO, conteudo_logo, {"content-type": content_type}
+                )
+            st.success("Logo salva — recarregue a página pra ver no menu lateral.")
+            st.rerun()
+        except Exception as e:
+            st.error(
+                f"Erro ao salvar a logo (crie um bucket público chamado '{layout.BUCKET_ASSETS}' no Supabase "
+                f"Storage antes, se ainda não existir): {e}"
+            )

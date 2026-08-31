@@ -1,9 +1,11 @@
 import streamlit as st
 
+import layout
 from db import get_client
 from formatacao import data_br, moeda
 
 st.set_page_config(page_title="Pesquisa por Cliente", layout="wide")
+layout.aplicar_logo()
 st.title("Pesquisa por cliente")
 st.caption("Histórico completo: movimentações de comissão e lançamentos previstos.")
 

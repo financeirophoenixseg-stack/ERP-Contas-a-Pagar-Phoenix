@@ -2,11 +2,13 @@ from datetime import date
 
 import streamlit as st
 
+import layout
 from db import get_client
 from formatacao import moeda
 from relatorios import LinhaDRE, montar_balanco, montar_dre
 
 st.set_page_config(page_title="DRE e Balanço", layout="wide")
+layout.aplicar_logo()
 st.title("DRE e Balanço Patrimonial")
 st.caption(
     "Calculados a partir dos lançamentos já classificados — a IA não escreve estes números, "

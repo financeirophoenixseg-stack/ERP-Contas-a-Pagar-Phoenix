@@ -5,6 +5,7 @@ from pathlib import Path
 
 import streamlit as st
 
+import layout
 import leitor_boleto
 import leitor_comprovante
 import sharepoint
@@ -44,6 +45,7 @@ def _campo_valor(coluna, label: str, key: str, valor_inicial: float = 0.0) -> fl
     return valor
 
 st.set_page_config(page_title="Contas a Pagar e Receber", layout="wide")
+layout.aplicar_logo()
 st.title("Contas a Pagar e Receber")
 st.caption(
     "Lançamentos previstos — antes de acontecer no banco. Avulso, parcelado ou fixo/recorrente. "
@@ -70,225 +72,225 @@ contas_bancarias = (
 )
 nomes_fornecedor_todos = {f["id"]: f["nome"] for f in fornecedores}
 
-st.subheader("📄 Ler boleto/guia automaticamente (via IA)")
-if not leitor_boleto.esta_configurado():
-    st.caption(
-        "Configure `ANTHROPIC_API_KEY` no arquivo `.env` para habilitar a leitura automática de boletos. "
-        "Enquanto isso, use o cadastro manual abaixo."
-    )
-else:
-    boleto_pdf = st.file_uploader("Suba o PDF do boleto/guia", type=["pdf"], key="upload_boleto_ia")
-    if boleto_pdf is not None and st.button("Ler boleto com IA"):
-        with st.spinner("Lendo o boleto..."):
+with st.expander("📄 Ler boleto/guia automaticamente (via IA)", expanded=bool(st.session_state.get("boleto_lido"))):
+    if not leitor_boleto.esta_configurado():
+        st.caption(
+            "Configure `ANTHROPIC_API_KEY` no arquivo `.env` para habilitar a leitura automática de boletos. "
+            "Enquanto isso, use o cadastro manual abaixo."
+        )
+    else:
+        boleto_pdf = st.file_uploader("Suba o PDF do boleto/guia", type=["pdf"], key="upload_boleto_ia")
+        if boleto_pdf is not None and st.button("Ler boleto com IA"):
+            with st.spinner("Lendo o boleto..."):
+                try:
+                    dados_lidos = leitor_boleto.ler_boleto(boleto_pdf.getvalue())
+                    st.session_state["boleto_lido"] = dados_lidos
+                    st.session_state["boleto_lido_arquivo"] = {
+                        "nome": boleto_pdf.name,
+                        "conteudo": boleto_pdf.getvalue(),
+                        "tipo": boleto_pdf.type,
+                    }
+                except Exception as e:
+                    st.error(f"Não deu pra ler automaticamente este boleto: {e}")
+
+        if st.session_state.get("boleto_lido"):
+            dados = st.session_state["boleto_lido"]
+            aviso = f"Confiança da leitura: **{dados.confianca}**"
+            if dados.observacoes:
+                aviso += f" — {dados.observacoes}"
+            st.info(aviso)
+            st.caption("Confira e corrija os dados abaixo antes de confirmar — nada é lançado sem sua confirmação.")
+
+            c1, c2 = st.columns(2)
+            valor_confirmado = _campo_valor(c1, "Valor (R$)", "valor_boleto_ia", valor_inicial=float(dados.valor or 0))
             try:
-                dados_lidos = leitor_boleto.ler_boleto(boleto_pdf.getvalue())
-                st.session_state["boleto_lido"] = dados_lidos
-                st.session_state["boleto_lido_arquivo"] = {
-                    "nome": boleto_pdf.name,
-                    "conteudo": boleto_pdf.getvalue(),
-                    "tipo": boleto_pdf.type,
-                }
-            except Exception as e:
-                st.error(f"Não deu pra ler automaticamente este boleto: {e}")
-
-    if st.session_state.get("boleto_lido"):
-        dados = st.session_state["boleto_lido"]
-        aviso = f"Confiança da leitura: **{dados.confianca}**"
-        if dados.observacoes:
-            aviso += f" — {dados.observacoes}"
-        st.info(aviso)
-        st.caption("Confira e corrija os dados abaixo antes de confirmar — nada é lançado sem sua confirmação.")
-
-        c1, c2 = st.columns(2)
-        valor_confirmado = _campo_valor(c1, "Valor (R$)", "valor_boleto_ia", valor_inicial=float(dados.valor or 0))
-        try:
-            venc_padrao = date.fromisoformat(dados.data_vencimento) if dados.data_vencimento else date.today()
-        except ValueError:
-            venc_padrao = date.today()
-        vencimento_confirmado = c2.date_input(
-            "Vencimento", value=venc_padrao, format="DD/MM/YYYY", key="vencimento_boleto_ia"
-        )
-        descricao_confirmada = st.text_input("Descrição", value=dados.descricao or "", key="descricao_boleto_ia")
-        empresa_boleto_id = st.selectbox(
-            "Empresa", options=list(empresas_por_id.keys()), format_func=lambda i: empresas_por_id[i], key="empresa_boleto_ia"
-        )
-
-        sugestao_fornecedor_id = None
-        if dados.favorecido:
-            alvo = dados.favorecido.lower()
-            for fid, nome in nomes_fornecedor_todos.items():
-                if nome.lower() in alvo or alvo in nome.lower():
-                    sugestao_fornecedor_id = fid
-                    break
-        opcoes_fornecedor_boleto = ["(nenhum)", "+ Novo fornecedor"] + list(nomes_fornecedor_todos.keys())
-        index_padrao = (
-            opcoes_fornecedor_boleto.index(sugestao_fornecedor_id) if sugestao_fornecedor_id else 0
-        )
-        fornecedor_escolhido_boleto = st.selectbox(
-            "Fornecedor",
-            options=opcoes_fornecedor_boleto,
-            index=index_padrao,
-            format_func=lambda i: i if i in ("(nenhum)", "+ Novo fornecedor") else nomes_fornecedor_todos.get(i, i),
-            key="fornecedor_boleto_ia",
-        )
-        novo_fornecedor_nome_boleto = None
-        if fornecedor_escolhido_boleto == "+ Novo fornecedor":
-            novo_fornecedor_nome_boleto = st.text_input(
-                "Nome do novo fornecedor", value=dados.favorecido or "", key="novo_fornecedor_boleto_ia"
+                venc_padrao = date.fromisoformat(dados.data_vencimento) if dados.data_vencimento else date.today()
+            except ValueError:
+                venc_padrao = date.today()
+            vencimento_confirmado = c2.date_input(
+                "Vencimento", value=venc_padrao, format="DD/MM/YYYY", key="vencimento_boleto_ia"
+            )
+            descricao_confirmada = st.text_input("Descrição", value=dados.descricao or "", key="descricao_boleto_ia")
+            empresa_boleto_id = st.selectbox(
+                "Empresa", options=list(empresas_por_id.keys()), format_func=lambda i: empresas_por_id[i], key="empresa_boleto_ia"
             )
 
-        col_confirmar, col_descartar = st.columns(2)
-        if col_confirmar.button("Cadastrar lançamento com estes dados", type="primary", key="confirmar_boleto_ia"):
-            fornecedor_id_boleto = None
-            if fornecedor_escolhido_boleto == "+ Novo fornecedor" and novo_fornecedor_nome_boleto and novo_fornecedor_nome_boleto.strip():
-                fornecedor_id_boleto = (
-                    client.table("fornecedores").insert({"nome": novo_fornecedor_nome_boleto.strip()}).execute().data[0]["id"]
-                )
-            elif fornecedor_escolhido_boleto not in ("(nenhum)", "+ Novo fornecedor"):
-                fornecedor_id_boleto = fornecedor_escolhido_boleto
-
-            criado = (
-                client.table("lancamentos_previstos")
-                .insert(
-                    {
-                        "empresa_id": empresa_boleto_id,
-                        "tipo": "pagar",
-                        "descricao": descricao_confirmada.strip() or "Boleto",
-                        "valor": valor_confirmado,
-                        "data_vencimento": vencimento_confirmado.isoformat(),
-                        "status": "previsto",
-                        "fornecedor_id": fornecedor_id_boleto,
-                        "grupo_id": str(uuid.uuid4()),
-                    }
-                )
-                .execute()
+            sugestao_fornecedor_id = None
+            if dados.favorecido:
+                alvo = dados.favorecido.lower()
+                for fid, nome in nomes_fornecedor_todos.items():
+                    if nome.lower() in alvo or alvo in nome.lower():
+                        sugestao_fornecedor_id = fid
+                        break
+            opcoes_fornecedor_boleto = ["(nenhum)", "+ Novo fornecedor"] + list(nomes_fornecedor_todos.keys())
+            index_padrao = (
+                opcoes_fornecedor_boleto.index(sugestao_fornecedor_id) if sugestao_fornecedor_id else 0
             )
-            lancamento_id_boleto = criado.data[0]["id"]
-
-            arquivo_info = st.session_state["boleto_lido_arquivo"]
-            hoje = date.today()
-            # nome do upload não é confiável (pode trazer ".." ou um caminho
-            # absoluto) — usa só o nome do arquivo em si, sem componentes de diretório.
-            nome_seguro = f"{uuid.uuid4().hex}_{Path(arquivo_info['nome']).name}"
-            caminho_storage = f"{hoje.year}/{hoje.month:02d}/boleto/{nome_seguro}"
-            try:
-                client.storage.from_(BUCKET_ANEXOS).upload(
-                    caminho_storage, arquivo_info["conteudo"], {"content-type": arquivo_info["tipo"] or "application/pdf"}
+            fornecedor_escolhido_boleto = st.selectbox(
+                "Fornecedor",
+                options=opcoes_fornecedor_boleto,
+                index=index_padrao,
+                format_func=lambda i: i if i in ("(nenhum)", "+ Novo fornecedor") else nomes_fornecedor_todos.get(i, i),
+                key="fornecedor_boleto_ia",
+            )
+            novo_fornecedor_nome_boleto = None
+            if fornecedor_escolhido_boleto == "+ Novo fornecedor":
+                novo_fornecedor_nome_boleto = st.text_input(
+                    "Nome do novo fornecedor", value=dados.favorecido or "", key="novo_fornecedor_boleto_ia"
                 )
-                client.table("anexos").insert(
-                    {
-                        "lancamento_previsto_id": lancamento_id_boleto,
-                        "tipo": "boleto",
-                        "nome_arquivo": arquivo_info["nome"],
-                        "storage_path": caminho_storage,
-                        "hash_arquivo": _hash_arquivo(arquivo_info["conteudo"]),
-                    }
-                ).execute()
-                if sharepoint.esta_configurado():
-                    try:
-                        sharepoint.enviar_arquivo(caminho_storage, arquivo_info["conteudo"])
-                    except Exception as e:
-                        st.warning(f"Anexo salvo, mas a cópia para o SharePoint falhou: {e}")
-            except Exception as e:
-                st.error(f"Lançamento criado, mas houve erro ao salvar o anexo: {e}")
 
-            del st.session_state["boleto_lido"]
-            del st.session_state["boleto_lido_arquivo"]
-            st.success("Lançamento criado a partir do boleto, com o anexo já vinculado.")
-            st.rerun()
+            col_confirmar, col_descartar = st.columns(2)
+            if col_confirmar.button("Cadastrar lançamento com estes dados", type="primary", key="confirmar_boleto_ia"):
+                fornecedor_id_boleto = None
+                if fornecedor_escolhido_boleto == "+ Novo fornecedor" and novo_fornecedor_nome_boleto and novo_fornecedor_nome_boleto.strip():
+                    fornecedor_id_boleto = (
+                        client.table("fornecedores").insert({"nome": novo_fornecedor_nome_boleto.strip()}).execute().data[0]["id"]
+                    )
+                elif fornecedor_escolhido_boleto not in ("(nenhum)", "+ Novo fornecedor"):
+                    fornecedor_id_boleto = fornecedor_escolhido_boleto
 
-        if col_descartar.button("Descartar leitura", key="descartar_boleto_ia"):
-            del st.session_state["boleto_lido"]
-            del st.session_state["boleto_lido_arquivo"]
-            st.rerun()
-
-st.divider()
-st.subheader("📎 Enviar vários comprovantes de uma vez (IA vincula e dá baixa sozinha)")
-if not leitor_comprovante.esta_configurado():
-    st.caption("Configure `ANTHROPIC_API_KEY` no arquivo `.env` para habilitar a leitura automática de comprovantes.")
-else:
-    st.caption(
-        "Cada comprovante é lido pela IA e casado com um lançamento previsto (por valor + proximidade de data). "
-        "Quando o casamento é certo (exatamente um candidato), o anexo é vinculado e o lançamento marcado como "
-        "pago automaticamente. Quando fica ambíguo ou a leitura não é confiável, o comprovante é salvo sem "
-        "vínculo, para você resolver manualmente em **Todos os anexos**."
-    )
-    comprovantes = st.file_uploader(
-        "Suba um ou vários PDFs de comprovante",
-        type=["pdf"],
-        accept_multiple_files=True,
-        key="upload_comprovantes_lote",
-    )
-    if comprovantes and st.button("Processar comprovantes", type="primary"):
-        resultados = []
-        with st.spinner(f"Lendo {len(comprovantes)} comprovante(s)..."):
-            for arquivo in comprovantes:
-                conteudo = arquivo.getvalue()
-                hoje = date.today()
-                hash_valor = _hash_arquivo(conteudo)
-
-                duplicado = _anexo_duplicado(client, hash_valor)
-                if duplicado:
-                    resultados.append(
+                criado = (
+                    client.table("lancamentos_previstos")
+                    .insert(
                         {
-                            "Arquivo": arquivo.name,
-                            "Valor lido": "-",
-                            "Resultado": f"⏭️ já enviado antes ({data_br(duplicado['created_at'])}) — ignorado",
+                            "empresa_id": empresa_boleto_id,
+                            "tipo": "pagar",
+                            "descricao": descricao_confirmada.strip() or "Boleto",
+                            "valor": valor_confirmado,
+                            "data_vencimento": vencimento_confirmado.isoformat(),
+                            "status": "previsto",
+                            "fornecedor_id": fornecedor_id_boleto,
+                            "grupo_id": str(uuid.uuid4()),
                         }
                     )
-                    continue
+                    .execute()
+                )
+                lancamento_id_boleto = criado.data[0]["id"]
 
-                # nome do upload não é confiável — usa só o nome do arquivo, sem componentes de diretório.
-                nome_seguro = f"{uuid.uuid4().hex}_{Path(arquivo.name).name}"
-                caminho_storage = f"{hoje.year}/{hoje.month:02d}/comprovante/{nome_seguro}"
-
-                try:
-                    dados = leitor_comprovante.ler_comprovante(conteudo)
-                except Exception as e:
-                    resultados.append({"Arquivo": arquivo.name, "Valor lido": "-", "Resultado": f"❌ erro na leitura: {e}"})
-                    continue
-
-                lancamento_id = None
-                if dados.confianca != "baixa":
-                    lancamento_id = leitor_comprovante.encontrar_lancamento_correspondente(
-                        client, dados.valor, dados.data_pagamento, dados.favorecido
-                    )
-
+                arquivo_info = st.session_state["boleto_lido_arquivo"]
+                hoje = date.today()
+                # nome do upload não é confiável (pode trazer ".." ou um caminho
+                # absoluto) — usa só o nome do arquivo em si, sem componentes de diretório.
+                nome_seguro = f"{uuid.uuid4().hex}_{Path(arquivo_info['nome']).name}"
+                caminho_storage = f"{hoje.year}/{hoje.month:02d}/boleto/{nome_seguro}"
                 try:
                     client.storage.from_(BUCKET_ANEXOS).upload(
-                        caminho_storage, conteudo, {"content-type": arquivo.type or "application/pdf"}
+                        caminho_storage, arquivo_info["conteudo"], {"content-type": arquivo_info["tipo"] or "application/pdf"}
                     )
                     client.table("anexos").insert(
                         {
-                            "lancamento_previsto_id": lancamento_id,
-                            "tipo": "comprovante",
-                            "nome_arquivo": arquivo.name,
+                            "lancamento_previsto_id": lancamento_id_boleto,
+                            "tipo": "boleto",
+                            "nome_arquivo": arquivo_info["nome"],
                             "storage_path": caminho_storage,
-                            "hash_arquivo": hash_valor,
+                            "hash_arquivo": _hash_arquivo(arquivo_info["conteudo"]),
                         }
                     ).execute()
                     if sharepoint.esta_configurado():
                         try:
-                            sharepoint.enviar_arquivo(caminho_storage, conteudo)
+                            sharepoint.enviar_arquivo(caminho_storage, arquivo_info["conteudo"])
                         except Exception as e:
-                            st.warning(f"'{arquivo.name}': anexo salvo, mas a cópia pro SharePoint falhou: {e}")
+                            st.warning(f"Anexo salvo, mas a cópia para o SharePoint falhou: {e}")
                 except Exception as e:
-                    resultados.append({"Arquivo": arquivo.name, "Valor lido": "-", "Resultado": f"❌ erro ao salvar: {e}"})
-                    continue
+                    st.error(f"Lançamento criado, mas houve erro ao salvar o anexo: {e}")
 
-                valor_lido = moeda(dados.valor) if dados.valor is not None else "-"
-                if lancamento_id:
-                    client.table("lancamentos_previstos").update(
-                        {"status": "pago", "data_pagamento": (dados.data_pagamento or hoje.isoformat())[:10]}
-                    ).eq("id", lancamento_id).execute()
-                    resultados.append({"Arquivo": arquivo.name, "Valor lido": valor_lido, "Resultado": "✅ vinculado e marcado como pago"})
-                else:
-                    resultados.append(
-                        {"Arquivo": arquivo.name, "Valor lido": valor_lido, "Resultado": "⚠️ salvo sem vínculo — revise manualmente"}
-                    )
+                del st.session_state["boleto_lido"]
+                del st.session_state["boleto_lido_arquivo"]
+                st.success("Lançamento criado a partir do boleto, com o anexo já vinculado.")
+                st.rerun()
 
-        st.dataframe(resultados, use_container_width=True, hide_index=True)
-        st.success(f"{len(comprovantes)} comprovante(s) processado(s).")
+            if col_descartar.button("Descartar leitura", key="descartar_boleto_ia"):
+                del st.session_state["boleto_lido"]
+                del st.session_state["boleto_lido_arquivo"]
+                st.rerun()
+
+st.divider()
+with st.expander("📎 Enviar vários comprovantes de uma vez (IA vincula e dá baixa sozinha)", expanded=False):
+    if not leitor_comprovante.esta_configurado():
+        st.caption("Configure `ANTHROPIC_API_KEY` no arquivo `.env` para habilitar a leitura automática de comprovantes.")
+    else:
+        st.caption(
+            "Cada comprovante é lido pela IA e casado com um lançamento previsto (por valor + proximidade de data). "
+            "Quando o casamento é certo (exatamente um candidato), o anexo é vinculado e o lançamento marcado como "
+            "pago automaticamente. Quando fica ambíguo ou a leitura não é confiável, o comprovante é salvo sem "
+            "vínculo, para você resolver manualmente em **Todos os anexos**."
+        )
+        comprovantes = st.file_uploader(
+            "Suba um ou vários PDFs de comprovante",
+            type=["pdf"],
+            accept_multiple_files=True,
+            key="upload_comprovantes_lote",
+        )
+        if comprovantes and st.button("Processar comprovantes", type="primary"):
+            resultados = []
+            with st.spinner(f"Lendo {len(comprovantes)} comprovante(s)..."):
+                for arquivo in comprovantes:
+                    conteudo = arquivo.getvalue()
+                    hoje = date.today()
+                    hash_valor = _hash_arquivo(conteudo)
+
+                    duplicado = _anexo_duplicado(client, hash_valor)
+                    if duplicado:
+                        resultados.append(
+                            {
+                                "Arquivo": arquivo.name,
+                                "Valor lido": "-",
+                                "Resultado": f"⏭️ já enviado antes ({data_br(duplicado['created_at'])}) — ignorado",
+                            }
+                        )
+                        continue
+
+                    # nome do upload não é confiável — usa só o nome do arquivo, sem componentes de diretório.
+                    nome_seguro = f"{uuid.uuid4().hex}_{Path(arquivo.name).name}"
+                    caminho_storage = f"{hoje.year}/{hoje.month:02d}/comprovante/{nome_seguro}"
+
+                    try:
+                        dados = leitor_comprovante.ler_comprovante(conteudo)
+                    except Exception as e:
+                        resultados.append({"Arquivo": arquivo.name, "Valor lido": "-", "Resultado": f"❌ erro na leitura: {e}"})
+                        continue
+
+                    lancamento_id = None
+                    if dados.confianca != "baixa":
+                        lancamento_id = leitor_comprovante.encontrar_lancamento_correspondente(
+                            client, dados.valor, dados.data_pagamento, dados.favorecido
+                        )
+
+                    try:
+                        client.storage.from_(BUCKET_ANEXOS).upload(
+                            caminho_storage, conteudo, {"content-type": arquivo.type or "application/pdf"}
+                        )
+                        client.table("anexos").insert(
+                            {
+                                "lancamento_previsto_id": lancamento_id,
+                                "tipo": "comprovante",
+                                "nome_arquivo": arquivo.name,
+                                "storage_path": caminho_storage,
+                                "hash_arquivo": hash_valor,
+                            }
+                        ).execute()
+                        if sharepoint.esta_configurado():
+                            try:
+                                sharepoint.enviar_arquivo(caminho_storage, conteudo)
+                            except Exception as e:
+                                st.warning(f"'{arquivo.name}': anexo salvo, mas a cópia pro SharePoint falhou: {e}")
+                    except Exception as e:
+                        resultados.append({"Arquivo": arquivo.name, "Valor lido": "-", "Resultado": f"❌ erro ao salvar: {e}"})
+                        continue
+
+                    valor_lido = moeda(dados.valor) if dados.valor is not None else "-"
+                    if lancamento_id:
+                        client.table("lancamentos_previstos").update(
+                            {"status": "pago", "data_pagamento": (dados.data_pagamento or hoje.isoformat())[:10]}
+                        ).eq("id", lancamento_id).execute()
+                        resultados.append({"Arquivo": arquivo.name, "Valor lido": valor_lido, "Resultado": "✅ vinculado e marcado como pago"})
+                    else:
+                        resultados.append(
+                            {"Arquivo": arquivo.name, "Valor lido": valor_lido, "Resultado": "⚠️ salvo sem vínculo — revise manualmente"}
+                        )
+
+            st.dataframe(resultados, use_container_width=True, hide_index=True)
+            st.success(f"{len(comprovantes)} comprovante(s) processado(s).")
 
 st.divider()
 st.subheader("Novo lançamento")

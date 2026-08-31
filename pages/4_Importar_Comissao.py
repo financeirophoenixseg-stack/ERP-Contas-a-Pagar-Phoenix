@@ -6,6 +6,7 @@ from pathlib import Path
 
 import streamlit as st
 
+import layout
 from classificacao_comissao import classificar, parcelas_restantes
 from regra_suhai import bate_com_formula, parcelas_enquadradas
 from db import get_client
@@ -14,6 +15,7 @@ from lancamentos import gerar_recorrencia, somar_meses
 from parsers import PARSERS, identificar_seguradora
 
 st.set_page_config(page_title="Importar Comissão", layout="wide")
+layout.aplicar_logo()
 st.title("Importar demonstrativo de comissão")
 st.caption(
     "Envie o(s) arquivo(s) do demonstrativo (PDF e/ou planilha — cada seguradora aceita o "

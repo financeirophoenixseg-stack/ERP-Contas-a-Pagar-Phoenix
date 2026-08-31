@@ -2,10 +2,12 @@ from datetime import date
 
 import streamlit as st
 
+import layout
 from db import get_client
 from formatacao import data_br, moeda
 
 st.set_page_config(page_title="Alertas", layout="wide")
+layout.aplicar_logo()
 st.title("Alertas")
 st.caption("Auditoria (ex.: comissão em conta de outra empresa) e lançamentos vencidos.")
 
