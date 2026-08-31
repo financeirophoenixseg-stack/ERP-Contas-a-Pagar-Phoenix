@@ -31,10 +31,35 @@ if not opcoes:
 cliente_id = st.selectbox("Cliente", options=opcoes, format_func=lambda i: nomes_por_id[i])
 cliente = next(c for c in clientes if c["id"] == cliente_id)
 
-st.divider()
-col1, col2 = st.columns(2)
-col1.metric("Nome", cliente["nome"])
-col2.metric("Empresa principal", (cliente.get("empresas") or {}).get("nome", "-"))
+
+def _iniciais(nome: str) -> str:
+    palavras = [p for p in nome.strip().split() if p]
+    if not palavras:
+        return "?"
+    if len(palavras) == 1:
+        return palavras[0][:2].upper()
+    return (palavras[0][0] + palavras[-1][0]).upper()
+
+
+nome_empresa_principal = (cliente.get("empresas") or {}).get("nome")
+
+st.markdown(
+    layout._compacto(
+        f"""
+        <div class="card" style="padding:20px 24px;display:flex;align-items:center;justify-content:space-between;">
+          <div style="display:flex;align-items:center;gap:16px;">
+            <div style="width:52px;height:52px;border-radius:14px;background:rgba(30,95,191,0.10);display:flex;align-items:center;justify-content:center;color:#1E5FBF;font-family:'Manrope',sans-serif;font-weight:700;font-size:18px;">{_iniciais(cliente['nome'])}</div>
+            <div>
+              <div style="font-family:'Manrope',sans-serif;font-weight:700;font-size:18px;color:#10233F;">{cliente['nome']}</div>
+              <div style="font-size:12.5px;color:#8592A8;margin-top:2px;">{cliente.get('documento') or 'Sem documento cadastrado'}</div>
+            </div>
+          </div>
+          {f'<span class="pill pill-blue">Empresa principal: {nome_empresa_principal}</span>' if nome_empresa_principal else ''}
+        </div>
+        """
+    ),
+    unsafe_allow_html=True,
+)
 
 movimentacoes = (
     client.table("movimentacoes_comissao")
@@ -44,12 +69,34 @@ movimentacoes = (
     .data
     or []
 )
+lancamentos = (
+    client.table("lancamentos_previstos")
+    .select("tipo, descricao, valor, data_vencimento, status, parcela_atual, parcela_total")
+    .eq("cliente_id", cliente_id)
+    .order("data_vencimento")
+    .execute()
+    .data
+    or []
+)
+total_comissoes = sum(m["valor_comissao"] for m in movimentacoes)
+
+layout.cartoes_kpi(
+    [
+        {
+            "icone": "check",
+            "cor": "#0ca30c",
+            "label": "Total líquido de comissões (histórico)",
+            "valor": moeda(total_comissoes),
+            "valor_cor": "#0ca30c",
+        },
+        {"icone": "receber", "label": "Movimentações de comissão", "valor": str(len(movimentacoes))},
+        {"icone": "pagar", "label": "Lançamentos previstos", "valor": str(len(lancamentos))},
+    ]
+)
 
 st.divider()
 st.subheader(f"Movimentações de comissão ({len(movimentacoes)})")
 if movimentacoes:
-    total = sum(m["valor_comissao"] for m in movimentacoes)
-    st.metric("Total líquido de comissões (histórico)", moeda(total))
     st.dataframe(
         [
             {
@@ -68,16 +115,6 @@ if movimentacoes:
     )
 else:
     st.info("Nenhuma movimentação de comissão para este cliente.")
-
-lancamentos = (
-    client.table("lancamentos_previstos")
-    .select("tipo, descricao, valor, data_vencimento, status, parcela_atual, parcela_total")
-    .eq("cliente_id", cliente_id)
-    .order("data_vencimento")
-    .execute()
-    .data
-    or []
-)
 
 st.divider()
 st.subheader(f"Lançamentos previstos ({len(lancamentos)})")

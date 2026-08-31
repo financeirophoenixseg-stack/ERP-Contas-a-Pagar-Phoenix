@@ -1,4 +1,5 @@
 import hashlib
+import html
 
 import streamlit as st
 from postgrest.exceptions import APIError
@@ -58,8 +59,6 @@ if not transacoes:
     st.error("Nenhuma movimentação encontrada neste arquivo.")
     st.stop()
 
-st.subheader(f"{len(transacoes)} movimentações encontradas")
-
 linhas = []
 sem_conta_cadastrada = set()
 for t in transacoes:
@@ -80,6 +79,36 @@ for t in transacoes:
         }
     )
 
+total_creditos = sum(linha["Valor"] for linha in linhas if linha["Valor"] >= 0)
+total_debitos = sum(linha["Valor"] for linha in linhas if linha["Valor"] < 0)
+
+st.markdown(
+    layout._compacto(
+        f"""
+        <div class="card" style="padding:18px 22px;display:flex;align-items:center;justify-content:space-between;">
+          <div style="display:flex;align-items:center;gap:14px;">
+            <div style="width:38px;height:38px;border-radius:10px;background:rgba(30,95,191,0.09);display:flex;align-items:center;justify-content:center;color:#1E5FBF;">
+              <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3h6l5 5v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M13 3v5h5"/></svg>
+            </div>
+            <div>
+              <div style="font-size:13.5px;font-weight:600;color:#10233F;">{html.escape(arquivo.name)}</div>
+              <div style="font-size:12px;color:#8592A8;margin-top:1px;">{len(linhas)} transações encontradas</div>
+            </div>
+          </div>
+        </div>
+        """
+    ),
+    unsafe_allow_html=True,
+)
+
+layout.cartoes_kpi(
+    [
+        {"icone": "check", "label": "Total de transações", "valor": str(len(linhas))},
+        {"icone": "receber", "cor": "#0ca30c", "label": "Créditos", "valor": moeda(total_creditos), "valor_cor": "#0ca30c"},
+        {"icone": "pagar", "label": "Débitos", "valor": moeda(total_debitos)},
+    ]
+)
+
 if sem_conta_cadastrada:
     st.warning(
         "Contas não cadastradas encontradas no arquivo: "
@@ -88,13 +117,46 @@ if sem_conta_cadastrada:
         "seja identificada automaticamente."
     )
 
-st.dataframe(
-    [
-        {**{k: v for k, v in linha.items() if not k.startswith("_")}, "Data": data_br(linha["Data"]), "Valor": moeda(linha["Valor"])}
-        for linha in linhas
-    ],
-    use_container_width=True,
-    hide_index=True,
+linhas_tabela = []
+for linha in linhas:
+    empresa_html = (
+        '<span class="pill pill-amber">não cadastrada</span>'
+        if linha["_conta_id"] is None
+        else html.escape(linha["Empresa"])
+    )
+    cor_valor = "#0ca30c" if linha["Valor"] >= 0 else "#10233F"
+    linhas_tabela.append(
+        f"""<tr>
+            <td>{empresa_html}</td>
+            <td style="color:#8592A8;">{html.escape(linha['Banco/Agência/Conta'])}</td>
+            <td>{data_br(linha['Data'])}</td>
+            <td>{html.escape(linha['Descrição'] or '')}</td>
+            <td style="text-align:right;font-weight:700;color:{cor_valor};">{'+' if linha['Valor'] >= 0 else ''}{moeda(linha['Valor'])}</td>
+        </tr>"""
+    )
+
+st.markdown(
+    layout._compacto(
+        f"""
+        <div class="card" style="padding:16px 22px;">
+          <table class="tabela-custom">
+            <thead>
+              <tr>
+                <th>Empresa</th>
+                <th>Banco / Agência / Conta</th>
+                <th>Data</th>
+                <th>Descrição</th>
+                <th style="text-align:right;">Valor</th>
+              </tr>
+            </thead>
+            <tbody>
+              {''.join(linhas_tabela)}
+            </tbody>
+          </table>
+        </div>
+        """
+    ),
+    unsafe_allow_html=True,
 )
 
 pode_importar = all(linha["_conta_id"] for linha in linhas)

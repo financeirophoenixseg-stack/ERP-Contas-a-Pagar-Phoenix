@@ -118,8 +118,13 @@ h1, h2, h3 { font-family: 'Manrope', sans-serif; letter-spacing: -0.01em; }
     font-weight: 600;
 }
 
-/* Cartões de indicador customizados (cartoes_kpi) e trechos de extrato
-   (linhas por dia) — classes usadas via st.markdown(unsafe_allow_html=True) */
+/* Cartão genérico (perfil, resumo, etc.) e cartões de indicador
+   customizados (cartoes_kpi) — classes usadas via
+   st.markdown(unsafe_allow_html=True) em várias telas */
+.card {
+    background: #FFFFFF; border: 1px solid #E7ECF3; border-radius: 14px;
+    box-shadow: 0 1px 2px rgba(16,24,40,0.04);
+}
 .kpi-grid { display: grid; gap: 16px; margin: 4px 0 4px 0; }
 .kpi-card {
     background: #FFFFFF; border: 1px solid #E7ECF3; border-radius: 14px;
@@ -148,6 +153,15 @@ h1, h2, h3 { font-family: 'Manrope', sans-serif; letter-spacing: -0.01em; }
 .extrato-desc { font-size: 13.5px; font-weight: 600; color: #10233F; }
 .extrato-sub { font-size: 12px; color: #8592A8; margin-top: 1px; }
 .extrato-value { font-family: 'Manrope', sans-serif; font-weight: 700; font-size: 13.5px; color: #10233F; }
+
+/* Tabela customizada (quando precisa de cor por célula, coisa que o
+   st.dataframe nativo não permite) */
+.tabela-custom { width: 100%; border-collapse: collapse; }
+.tabela-custom th {
+    font-size: 11.5px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;
+    color: #8592A8; padding: 0 4px 10px 4px; text-align: left;
+}
+.tabela-custom td { font-size: 13.5px; color: #10233F; padding: 11px 4px; border-top: 1px solid #F0F2F6; }
 </style>
 """
 
