@@ -1,4 +1,5 @@
 import hashlib
+import html
 import tempfile
 import uuid
 from datetime import date
@@ -61,17 +62,42 @@ with tempfile.TemporaryDirectory() as tmp:
         )
         st.stop()
 
-    st.success(f"Seguradora identificada automaticamente: **{seguradora_nome}**")
     lote = PARSERS[seguradora_nome]["parse"](caminhos)
 
 if not lote.linhas:
     st.error("Nenhuma linha de comissão encontrada nestes arquivos.")
     st.stop()
 
-col1, col2, col3 = st.columns(3)
-col1.metric("Data de pagamento", lote.data_pagamento or "?")
-col2.metric("Valor bruto (tributário)", moeda(lote.valor_bruto))
-col3.metric("Valor líquido", moeda(lote.valor_liquido))
+impostos_retidos = sum(v or 0 for v in (lote.irrf, lote.iss, lote.inss, lote.pis_cofins_csll))
+
+st.markdown(
+    layout._compacto(
+        f"""
+        <div class="card" style="padding:18px 22px;display:flex;align-items:center;justify-content:space-between;">
+          <div style="display:flex;align-items:center;gap:14px;">
+            <div style="width:38px;height:38px;border-radius:10px;background:rgba(30,95,191,0.09);display:flex;align-items:center;justify-content:center;color:#1E5FBF;">
+              <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3h6l5 5v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M13 3v5h5"/></svg>
+            </div>
+            <div>
+              <div style="font-size:13.5px;font-weight:600;color:#10233F;">{html.escape(', '.join(a.name for a in arquivos))}</div>
+              <div style="font-size:12px;color:#8592A8;margin-top:1px;">{len(lote.linhas)} linhas de comissão encontradas</div>
+            </div>
+          </div>
+          <span class="pill pill-blue">Seguradora: {html.escape(seguradora_nome)}</span>
+        </div>
+        """
+    ),
+    unsafe_allow_html=True,
+)
+
+layout.cartoes_kpi(
+    [
+        {"icone": "relogio", "label": "Data de pagamento", "valor": lote.data_pagamento or "?"},
+        {"icone": "pagar", "label": "Valor bruto (tributário)", "valor": moeda(lote.valor_bruto)},
+        {"icone": "alerta", "cor": "#B27B0E", "label": "Impostos retidos", "valor": moeda(impostos_retidos)},
+        {"icone": "check", "cor": "#0ca30c", "label": "Valor líquido", "valor": moeda(lote.valor_liquido), "valor_cor": "#0ca30c"},
+    ]
+)
 identificador = (
     f"CNPJ: {lote.cnpj}" if lote.cnpj
     else f"SUSEP: {lote.susep}" if lote.susep
@@ -112,7 +138,10 @@ if not empresa_resolvida and lote.conta:
         identificado_por = "conta bancária"
 
 if empresa_resolvida:
-    st.success(f"Empresa identificada automaticamente pelo {identificado_por}: **{empresa_resolvida['nome']}**")
+    st.markdown(
+        f'<span class="pill pill-green">Empresa: {html.escape(empresa_resolvida["nome"])} (por {identificado_por})</span>',
+        unsafe_allow_html=True,
+    )
     empresa_id = empresa_resolvida["id"]
 else:
     motivo = (
@@ -155,24 +184,58 @@ else:
         except Exception as e:
             st.error(f"Erro ao salvar código comissionado: {e}")
 
+_PILL_POR_TIPO = {
+    "pagamento": "pill-neutral",
+    "adiantamento": "pill-blue",
+    "cancelamento": "pill-red",
+    "recuperacao": "pill-red",
+    "estorno": "pill-red",
+    "ajuste": "pill-neutral",
+}
+
+
+def _pill_tipo(tipo: str) -> str:
+    classe = _PILL_POR_TIPO.get(tipo, "pill-neutral")
+    return f'<span class="pill {classe}">{html.escape(tipo)}</span>'
+
+
 st.divider()
 st.subheader(f"{len(lote.linhas)} movimentações de comissão")
-st.dataframe(
-    [
-        {
-            "Cliente": l.cliente or "(por apólice)",
-            "Apólice": l.apolice,
-            "Endosso": l.endosso,
-            "Parcela": l.parcela,
-            "% Comissão": l.percentual_comissao,
-            "Tipo": l.tipo,
-            "Valor Parcela": moeda(l.valor_parcela),
-            "Valor Comissão": moeda(l.valor_comissao),
-        }
-        for l in lote.linhas
-    ],
-    use_container_width=True,
-    hide_index=True,
+
+linhas_html = "".join(
+    f"""<tr>
+        <td>{html.escape(l.cliente or '(por apólice)')}</td>
+        <td style="color:#8592A8;">{html.escape(l.apolice or '-')}</td>
+        <td>{html.escape(l.parcela or '-')}</td>
+        <td>{_pill_tipo(l.tipo)}</td>
+        <td style="text-align:right;">{l.percentual_comissao if l.percentual_comissao is not None else '-'}%</td>
+        <td style="text-align:right;font-weight:700;">{moeda(l.valor_comissao)}</td>
+    </tr>"""
+    for l in lote.linhas
+)
+st.markdown(
+    layout._compacto(
+        f"""
+        <div class="card" style="padding:16px 22px;">
+          <table class="tabela-custom">
+            <thead>
+              <tr>
+                <th>Cliente</th>
+                <th>Apólice</th>
+                <th>Parcela</th>
+                <th>Tipo</th>
+                <th style="text-align:right;">% Comissão</th>
+                <th style="text-align:right;">Valor comissão</th>
+              </tr>
+            </thead>
+            <tbody>
+              {linhas_html}
+            </tbody>
+          </table>
+        </div>
+        """
+    ),
+    unsafe_allow_html=True,
 )
 
 # Linhas sem nome de cliente direto (ex.: Bradesco Saúde) são identificadas
