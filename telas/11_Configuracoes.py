@@ -1,6 +1,6 @@
 import hashlib
 import uuid
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 
 import streamlit as st
 import streamlit.components.v1 as components
@@ -22,10 +22,18 @@ def _sincronizar_conta_pluggy(client, conta_bancaria_id: str, integracao: dict) 
         return {"erro": "Conta dentro do banco ainda não foi escolhida — desconecte e conecte de novo."}
 
     if integracao.get("ultima_sincronizacao"):
+        # a partir do dia da última sincronização (ou da conexão, na
+        # primeira vez — ver "Salvar conexão" acima) — de propósito SEM
+        # margem pra trás, pra nunca trazer transação de antes de você
+        # ter conectado a conta e bagunçar o que já estava lançado
+        # manualmente. O dedup por fit_id evita duplicar se rodar de novo
+        # no mesmo dia.
         dt_ultima = datetime.fromisoformat(str(integracao["ultima_sincronizacao"]).replace("Z", "+00:00"))
-        desde = (dt_ultima.date() - timedelta(days=1)).isoformat()  # 1 dia de margem, evita perder transação de borda
+        desde = dt_ultima.date().isoformat()
     else:
-        desde = (date.today() - timedelta(days=90)).isoformat()  # primeira sincronização: últimos 90 dias
+        # não deveria cair aqui (a conexão já grava ultima_sincronizacao),
+        # mas por segurança: nunca busca histórico, só a partir de hoje.
+        desde = date.today().isoformat()
 
     transacoes = pluggy_integration.listar_transacoes(account_id, desde=desde)
 
@@ -310,9 +318,14 @@ with aba_integracao_bancaria:
                                             "pluggy_item_id": item_id_colado.strip(),
                                             "pluggy_account_id": contas_pluggy[0].id if len(contas_pluggy) == 1 else None,
                                             "status": "ativo",
+                                            # marca a sincronização "desde agora" já na conexão — a
+                                            # primeira sincronização de verdade só traz transações a
+                                            # partir de HOJE, nunca o histórico anterior à conexão,
+                                            # pra não duplicar/bagunçar nada já lançado manualmente.
+                                            "ultima_sincronizacao": datetime.now().isoformat(),
                                         }
                                     ).execute()
-                                    st.success("Conexão salva.")
+                                    st.success("Conexão salva. A partir de agora, só as transações de hoje em diante serão trazidas.")
                                     del st.session_state[f"connect_token_{c['id']}"]
                                     st.rerun()
 
