@@ -884,12 +884,7 @@ else:
             st.success("Cancelado.")
             st.rerun()
 
-    st.caption("Clique em um lançamento abaixo para ver ou anexar boletos/comprovantes dele.")
+    st.caption("📎 Anexos por lançamento — clique pra ver ou anexar boleto/comprovante (sem repetir o que já aparece acima).")
     for item in itens:
-        terceiro = (item.get("clientes") or {}).get("nome") or (item.get("fornecedores") or {}).get("nome") or "-"
-        rotulo = (
-            f"📎 {data_br(item['data_vencimento'])} — {item['descricao']} — {terceiro} — "
-            f"{moeda(item['valor'])} ({item['status']})"
-        )
-        with st.expander(rotulo):
+        with st.expander(f"📎 {item['descricao'] or '-'}"):
             _secao_anexos(item["id"], key_prefix=f"extrato_anexo_{item['id']}")
