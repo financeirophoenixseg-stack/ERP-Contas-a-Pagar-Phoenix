@@ -4,6 +4,7 @@ import streamlit as st
 
 import assistente_financeiro
 import layout
+import relatorios
 from db import get_client
 from formatacao import data_br, moeda
 from graficos import grafico_donut_status, grafico_fluxo_caixa
@@ -109,6 +110,68 @@ layout.cartoes_kpi(
 
 st.divider()
 
+st.markdown("##### Resumo financeiro do mês")
+inicio_mes = hoje.replace(day=1)
+dre_mes = relatorios.calcular_dre(client, inicio_mes.isoformat(), hoje_iso)
+balanco_atual = relatorios.calcular_balanco(client)
+impostos_mes = relatorios.calcular_impostos_retidos(client, inicio_mes.isoformat(), hoje_iso)
+
+layout.cartoes_kpi(
+    [
+        {"icone": "banco", "label": "Caixa atual", "valor": moeda(balanco_atual["ativo"]["Caixa e Bancos"])},
+        {
+            "icone": "check" if dre_mes["resultado"] >= 0 else "alerta",
+            "cor": "#0ca30c" if dre_mes["resultado"] >= 0 else "#B23A3A",
+            "label": "Resultado do mês",
+            "valor": moeda(dre_mes["resultado"]),
+            "valor_cor": "#0ca30c" if dre_mes["resultado"] >= 0 else "#B23A3A",
+        },
+        {
+            "icone": "receber",
+            "cor": "#0ca30c",
+            "label": "Receitas do mês",
+            "valor": moeda(dre_mes["total_receitas"]),
+            "valor_cor": "#0ca30c",
+        },
+        {"icone": "pagar", "label": "Impostos retidos no mês", "valor": moeda(impostos_mes["total"])},
+    ]
+)
+
+st.divider()
+
+st.markdown("##### Vencendo nos próximos 7 dias")
+fim_semana_iso = (hoje + timedelta(days=7)).isoformat()
+vencendo = (
+    client.table("lancamentos_previstos")
+    .select("tipo, descricao, valor, data_vencimento, clientes(nome), fornecedores(nome)")
+    .eq("status", "previsto")
+    .gte("data_vencimento", hoje_iso)
+    .lte("data_vencimento", fim_semana_iso)
+    .order("data_vencimento")
+    .execute()
+    .data
+    or []
+)
+if vencendo:
+    st.dataframe(
+        [
+            {
+                "Vencimento": data_br(v["data_vencimento"]),
+                "Tipo": "A pagar" if v["tipo"] == "pagar" else "A receber",
+                "Descrição": v["descricao"],
+                "Cliente/Fornecedor": (v.get("clientes") or {}).get("nome") or (v.get("fornecedores") or {}).get("nome") or "-",
+                "Valor": moeda(v["valor"]),
+            }
+            for v in vencendo
+        ],
+        use_container_width=True,
+        hide_index=True,
+    )
+else:
+    st.info("Nada vencendo nos próximos 7 dias.")
+
+st.divider()
+
 lotes = client.table("lotes_comissao").select("status, valor_liquido").execute().data or []
 por_status = {"pendente": [], "conciliado": [], "divergente": []}
 for l in lotes:
@@ -166,6 +229,13 @@ with col_donut:
         ),
         unsafe_allow_html=True,
     )
+    valor_pendente = sum(l["valor_liquido"] or 0 for l in por_status["pendente"])
+    valor_divergente = sum(l["valor_liquido"] or 0 for l in por_status["divergente"])
+    if valor_pendente or valor_divergente:
+        st.caption(
+            f"💰 {moeda(valor_pendente)} pendente(s) de conciliação"
+            + (f" · {moeda(valor_divergente)} divergente(s)" if valor_divergente else "")
+        )
 
 st.divider()
 
