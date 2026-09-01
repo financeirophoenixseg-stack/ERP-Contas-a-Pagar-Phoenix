@@ -32,6 +32,9 @@ TABELAS = [
     "movimentacoes_comissao",
     "lancamentos_previstos",
     "auditoria_alertas",
+    "anexos",
+    "integracoes_bancarias",
+    "transferencias_contas",
 ]
 
 
@@ -41,7 +44,11 @@ def backup() -> Path:
     destino.mkdir(parents=True, exist_ok=True)
 
     for tabela in TABELAS:
-        linhas = client.table(tabela).select("*").execute().data or []
+        try:
+            linhas = client.table(tabela).select("*").execute().data or []
+        except Exception as e:
+            print(f"{tabela}: erro ao ler ({e}) — pulando, provavelmente a tabela ainda não existe")
+            continue
         (destino / f"{tabela}.json").write_text(
             json.dumps(linhas, ensure_ascii=False, indent=2, default=str), encoding="utf-8"
         )
