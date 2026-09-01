@@ -866,25 +866,27 @@ else:
         unsafe_allow_html=True,
     )
 
+    opcoes_todos = {
+        i["id"]: f"{data_br(i['data_vencimento'])} — {i['descricao']} — {moeda(i['valor'])}" for i in itens
+    }
     pendentes = [i for i in itens if i["status"] == "previsto"]
-    if pendentes:
-        opcoes = {i["id"]: f"{data_br(i['data_vencimento'])} — {i['descricao']} — {moeda(i['valor'])}" for i in pendentes}
-        col_a, col_b, col_c = st.columns([3, 1, 1])
-        selecionado = col_a.selectbox(
-            "Ação rápida em:", options=list(opcoes.keys()), format_func=lambda i: opcoes[i], key="extrato_sel_acao"
-        )
-        if col_b.button("Marcar como pago", key="extrato_marcar_pago"):
-            client.table("lancamentos_previstos").update(
-                {"status": "pago", "data_pagamento": date.today().isoformat()}
-            ).eq("id", selecionado).execute()
-            st.success("Marcado como pago.")
-            st.rerun()
-        if col_c.button("Cancelar", key="extrato_cancelar"):
-            client.table("lancamentos_previstos").update({"status": "cancelado"}).eq("id", selecionado).execute()
-            st.success("Cancelado.")
-            st.rerun()
+    col_a, col_b, col_c, col_d = st.columns([3, 1, 1, 1])
+    selecionado = col_a.selectbox(
+        "Ação rápida em:", options=list(opcoes_todos.keys()), format_func=lambda i: opcoes_todos[i], key="extrato_sel_acao"
+    )
+    if col_b.button("Marcar como pago", key="extrato_marcar_pago", disabled=selecionado not in {p["id"] for p in pendentes}):
+        client.table("lancamentos_previstos").update(
+            {"status": "pago", "data_pagamento": date.today().isoformat()}
+        ).eq("id", selecionado).execute()
+        st.success("Marcado como pago.")
+        st.rerun()
+    if col_c.button("Cancelar", key="extrato_cancelar", disabled=selecionado not in {p["id"] for p in pendentes}):
+        client.table("lancamentos_previstos").update({"status": "cancelado"}).eq("id", selecionado).execute()
+        st.success("Cancelado.")
+        st.rerun()
+    if col_d.button("📎 Anexos", key="extrato_toggle_anexos"):
+        st.session_state["extrato_anexos_abertos"] = not st.session_state.get("extrato_anexos_abertos", False)
 
-    st.caption("📎 Anexos por lançamento — clique pra ver ou anexar boleto/comprovante (sem repetir o que já aparece acima).")
-    for item in itens:
-        with st.expander(f"📎 {item['descricao'] or '-'}"):
-            _secao_anexos(item["id"], key_prefix=f"extrato_anexo_{item['id']}")
+    if st.session_state.get("extrato_anexos_abertos") and selecionado:
+        with st.container(border=True):
+            _secao_anexos(selecionado, key_prefix=f"extrato_anexo_{selecionado}")
