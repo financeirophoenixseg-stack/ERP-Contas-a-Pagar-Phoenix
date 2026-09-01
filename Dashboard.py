@@ -2,6 +2,7 @@ from datetime import date, timedelta
 
 import streamlit as st
 
+import assistente_financeiro
 import layout
 from db import get_client
 from formatacao import data_br, moeda
@@ -21,6 +22,39 @@ except RuntimeError as e:
 except Exception as e:
     st.error(f"Erro ao conectar ao Supabase: {e}")
     st.stop()
+
+with st.container(border=True):
+    st.markdown("##### 🤖 Assistente Financeiro")
+    st.caption(
+        "Pergunte sobre contas a pagar/receber, comissões, fluxo de caixa ou DRE — as respostas "
+        "vêm sempre de consultas reais aos dados do sistema, nunca de estimativa da IA."
+    )
+
+    if not assistente_financeiro.esta_configurado():
+        st.info("Configure `ANTHROPIC_API_KEY` no arquivo `.env` para habilitar o assistente financeiro.")
+    else:
+        if "chat_financeiro" not in st.session_state:
+            st.session_state["chat_financeiro"] = []
+
+        for msg in st.session_state["chat_financeiro"]:
+            with st.chat_message("user" if msg["role"] == "user" else "assistant"):
+                st.markdown(msg["content"])
+
+        pergunta = st.chat_input("Ex.: quanto tenho a pagar essa semana? Qual cliente me deve mais?")
+        if pergunta:
+            st.session_state["chat_financeiro"].append({"role": "user", "content": pergunta})
+            with st.chat_message("user"):
+                st.markdown(pergunta)
+            with st.chat_message("assistant"):
+                with st.spinner("Consultando os dados..."):
+                    try:
+                        resposta = assistente_financeiro.responder(st.session_state["chat_financeiro"], client)
+                    except Exception as e:
+                        resposta = f"Não consegui responder agora — houve um erro: {e}"
+                st.markdown(resposta)
+            st.session_state["chat_financeiro"].append({"role": "assistant", "content": resposta})
+
+st.divider()
 
 hoje = date.today()
 hoje_iso = hoje.isoformat()
