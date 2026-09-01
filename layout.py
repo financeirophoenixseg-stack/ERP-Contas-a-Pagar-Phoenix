@@ -12,6 +12,9 @@ PLANO.md, item de layout."""
 
 from __future__ import annotations
 
+import base64
+import html
+
 import streamlit as st
 
 from db import get_client
@@ -19,6 +22,7 @@ from db import get_client
 BUCKET_ASSETS = "assets"
 CAMINHO_LOGO = "logo.png"
 COR_MARCA = "#0F3E7A"  # azul escuro — cor de marca (antes #1E5FBF, mais claro)
+NOME_SISTEMA = "ERP Phoenix / Vizentim"
 
 
 def _compacto(html: str) -> str:
@@ -151,11 +155,18 @@ div[class*="st-key-toggle_"] button:hover {
     border-radius: 8px;
 }
 [data-testid="stSidebarNavLink"][aria-current="page"] {
-    background-color: #0F3E7A;
+    background-color: #E4ECF7;
     font-weight: 600;
 }
-[data-testid="stSidebarNavLink"][aria-current="page"] * {
-    color: #FFFFFF !important;
+/* Cabeçalho de seção da navegação (Principal / Financeiro / Análise) */
+[data-testid="stSidebarNavSeparator"],
+[data-testid="stSidebarNav"] p {
+    font-size: 11px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;
+    color: #8592A8 !important;
+}
+.sidebar-footer {
+    font-size: 11.5px; color: #8592A8; padding: 14px 6px 4px 6px;
+    border-top: 1px solid #E3E8F0; margin-top: 10px;
 }
 
 /* Cartão genérico (perfil, resumo, etc.) e cartões de indicador
@@ -172,8 +183,8 @@ div[class*="st-key-toggle_"] button:hover {
     box-shadow: 0 1px 2px rgba(16,24,40,0.04);
 }
 .kpi-icon {
-    width: 32px; height: 32px; border-radius: 9px; display: flex;
-    align-items: center; justify-content: center; flex-shrink: 0;
+    width: 40px; height: 40px; border-radius: 50%; display: flex;
+    align-items: center; justify-content: center; flex-shrink: 0; color: #FFFFFF;
 }
 .kpi-label { font-size: 12.5px; font-weight: 600; color: #5B6B85; }
 .kpi-value { font-family: 'Manrope', sans-serif; font-weight: 700; font-size: 21px; color: #10233F; letter-spacing: -0.01em; }
@@ -206,20 +217,48 @@ div[class*="st-key-toggle_"] button:hover {
 """
 
 
+def _logo_padrao_svg(nome: str, inicial: str = "P") -> str:
+    """Gera um logo horizontal simples (círculo com a inicial + nome do
+    sistema) como SVG, usado como fallback via st.logo() enquanto o
+    usuário não sobe uma logo própria em Configurações → Aparência."""
+    inicial = html.escape(inicial[:1].upper())
+    nome_seguro = html.escape(nome)
+    svg = (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="260" height="48" viewBox="0 0 260 48">'
+        f'<rect x="2" y="4" width="40" height="40" rx="12" fill="{COR_MARCA}"/>'
+        f'<text x="22" y="31" font-family="Manrope, sans-serif" font-weight="800" font-size="19" '
+        f'fill="#FFFFFF" text-anchor="middle">{inicial}</text>'
+        f'<text x="54" y="30" font-family="Manrope, sans-serif" font-weight="700" font-size="16" '
+        f'fill="#10233F">{nome_seguro}</text>'
+        f"</svg>"
+    )
+    return "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode()
+
+
 def aplicar_logo() -> None:
     """Chamar logo após `st.set_page_config()` em cada página — aplica o CSS
-    global e, se houver, a logo do sistema no menu lateral."""
+    global e mostra a logo do sistema no topo do menu lateral (a enviada em
+    Configurações → Aparência, ou um logo padrão gerado com o nome do
+    sistema enquanto isso). Também adiciona o rodapé da sidebar."""
     st.markdown(_CSS, unsafe_allow_html=True)
+    logo_mostrada = False
     try:
         client = get_client()
         arquivos = client.storage.from_(BUCKET_ASSETS).list()
         if any(a["name"] == CAMINHO_LOGO for a in (arquivos or [])):
             url = client.storage.from_(BUCKET_ASSETS).get_public_url(CAMINHO_LOGO)
             st.logo(url)
+            logo_mostrada = True
     except Exception:
-        # sem logo configurada ainda, bucket não existe, ou erro de conexão
-        # — a tela segue normalmente sem logo, isso nunca deve travar a página.
+        # bucket não existe ainda, ou erro de conexão — cai no logo padrão abaixo.
         pass
+    if not logo_mostrada:
+        try:
+            st.logo(_logo_padrao_svg(NOME_SISTEMA))
+        except Exception:
+            # nunca deve travar a página por causa do logo.
+            pass
+    st.sidebar.markdown(_compacto('<div class="sidebar-footer">Sistema interno · v1.0</div>'), unsafe_allow_html=True)
 
 
 def cartoes_kpi(itens: list[dict], colunas: int | None = None) -> None:
@@ -238,13 +277,6 @@ def cartoes_kpi(itens: list[dict], colunas: int | None = None) -> None:
     partes = [f'<div class="kpi-grid" style="grid-template-columns:repeat({colunas}, minmax(0,1fr));">']
     for item in itens:
         cor = item.get("cor", COR_MARCA)
-        # cor de marca (azul) ganha fundo sólido escuro + ícone branco; as
-        # demais cores (vermelho/verde/âmbar de status) mantêm o fundo
-        # clarinho de baixa opacidade, que já tem bom contraste nelas.
-        if cor in (COR_MARCA, "#1E5FBF"):
-            bg_icone, cor_icone = COR_MARCA, "#FFFFFF"
-        else:
-            bg_icone, cor_icone = f"{cor}18", cor
         icone_svg = ICONES.get(item.get("icone", ""), ICONES["check"])
         pill_html = ""
         if item.get("pill_texto"):
@@ -253,14 +285,16 @@ def cartoes_kpi(itens: list[dict], colunas: int | None = None) -> None:
         partes.append(
             f"""
             <div class="kpi-card">
-                <div style="display:flex;align-items:center;gap:9px;">
-                    <div class="kpi-icon" style="background:{bg_icone};color:{cor_icone};">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">{icone_svg}</svg>
+                <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;">
+                    <div>
+                        <div class="kpi-label">{item['label']}</div>
+                        <div class="kpi-value" style="{'color:' + item['valor_cor'] + ';' if item.get('valor_cor') else ''}">{item['valor']}</div>
+                        {pill_html}
                     </div>
-                    <span class="kpi-label">{item['label']}</span>
+                    <div class="kpi-icon" style="background:{cor};">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">{icone_svg}</svg>
+                    </div>
                 </div>
-                <span class="kpi-value" style="{'color:' + item['valor_cor'] + ';' if item.get('valor_cor') else ''}">{item['valor']}</span>
-                {pill_html}
             </div>
             """
         )
