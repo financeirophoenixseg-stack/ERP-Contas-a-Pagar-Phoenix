@@ -1,4 +1,5 @@
 import hashlib
+import re
 import uuid
 from datetime import date, datetime
 
@@ -10,6 +11,16 @@ import layout
 import pluggy_integration
 from conciliacao import inserir_e_conciliar
 from db import get_client
+
+_PADRAO_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE)
+
+
+def _extrair_item_id(texto: str) -> str | None:
+    """O usuário às vezes cola o link inteiro da Pluggy (ex.:
+    'https://meu.pluggy.ai/connections/<uuid>') em vez de só o código —
+    extrai o UUID de dentro de qualquer texto colado."""
+    match = _PADRAO_UUID.search(texto or "")
+    return match.group(0) if match else None
 
 
 def _sincronizar_conta_pluggy(client, conta_bancaria_id: str, integracao: dict) -> dict:
@@ -303,19 +314,27 @@ with aba_integracao_bancaria:
                                 height=600,
                             )
                             item_id_colado = st.text_input(
-                                "Depois de conectar, cole aqui o código (item id) que apareceu:",
+                                "Depois de conectar, cole aqui o código (item id) que apareceu — "
+                                "pode colar o link inteiro também, o sistema extrai o código sozinho:",
                                 key=f"item_id_{c['id']}",
                             )
                             if item_id_colado.strip() and st.button("Salvar conexão", key=f"salvar_conexao_{c['id']}"):
+                                item_id = _extrair_item_id(item_id_colado)
+                                if not item_id:
+                                    st.error(
+                                        "Não encontrei um código válido no texto colado. Cole o código (item id) "
+                                        "ou o link que apareceu depois de conectar."
+                                    )
+                                    st.stop()
                                 try:
-                                    contas_pluggy = pluggy_integration.listar_contas(item_id_colado.strip())
+                                    contas_pluggy = pluggy_integration.listar_contas(item_id)
                                 except Exception as e:
                                     st.error(f"Não deu pra confirmar a conexão: {e}")
                                 else:
                                     client.table("integracoes_bancarias").insert(
                                         {
                                             "conta_bancaria_id": c["id"],
-                                            "pluggy_item_id": item_id_colado.strip(),
+                                            "pluggy_item_id": item_id,
                                             "pluggy_account_id": contas_pluggy[0].id if len(contas_pluggy) == 1 else None,
                                             "status": "ativo",
                                             # marca a sincronização "desde agora" já na conexão — a
