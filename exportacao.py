@@ -14,7 +14,7 @@ from reportlab.lib.units import cm
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
 
-AZUL_MARCA = colors.HexColor("#1E5FBF")
+AZUL_MARCA = colors.HexColor("#0F3E7A")
 
 
 def gerar_excel(linhas: list[dict], titulo: str) -> bytes:

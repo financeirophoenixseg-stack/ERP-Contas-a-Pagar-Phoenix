@@ -18,6 +18,7 @@ from db import get_client
 
 BUCKET_ASSETS = "assets"
 CAMINHO_LOGO = "logo.png"
+COR_MARCA = "#0F3E7A"  # azul escuro — cor de marca (antes #1E5FBF, mais claro)
 
 
 def _compacto(html: str) -> str:
@@ -61,7 +62,7 @@ h1, h2, h3 { font-family: 'Manrope', sans-serif; letter-spacing: -0.01em; }
 /* Métricas nativas (st.metric) viram cartões — usado onde ainda não migrou
    pro cartão customizado (cartoes_kpi) */
 [data-testid="stMetric"] {
-    background: #F7F9FC;
+    background: #EAF2FD;
     border: 1px solid #E3E8F0;
     border-radius: 12px;
     padding: 1rem 1.25rem;
@@ -122,8 +123,8 @@ div[class*="st-key-toggle_"] button {
     color: #8592A8;
 }
 div[class*="st-key-toggle_"] button:hover {
-    background: rgba(30,95,191,0.08);
-    color: #1E5FBF;
+    background: #0F3E7A;
+    color: #FFFFFF;
 }
 [data-testid="stTextInput"] input,
 [data-testid="stNumberInput"] input,
@@ -150,20 +151,23 @@ div[class*="st-key-toggle_"] button:hover {
     border-radius: 8px;
 }
 [data-testid="stSidebarNavLink"][aria-current="page"] {
-    background-color: rgba(30, 95, 191, 0.10);
+    background-color: #0F3E7A;
     font-weight: 600;
+}
+[data-testid="stSidebarNavLink"][aria-current="page"] * {
+    color: #FFFFFF !important;
 }
 
 /* Cartão genérico (perfil, resumo, etc.) e cartões de indicador
    customizados (cartoes_kpi) — classes usadas via
    st.markdown(unsafe_allow_html=True) em várias telas */
 .card {
-    background: #FFFFFF; border: 1px solid #E7ECF3; border-radius: 14px;
+    background: #EAF2FD; border: 1px solid #E7ECF3; border-radius: 14px;
     box-shadow: 0 1px 2px rgba(16,24,40,0.04);
 }
 .kpi-grid { display: grid; gap: 16px; margin: 4px 0 4px 0; }
 .kpi-card {
-    background: #FFFFFF; border: 1px solid #E7ECF3; border-radius: 14px;
+    background: #EAF2FD; border: 1px solid #E7ECF3; border-radius: 14px;
     padding: 16px 18px; display: flex; flex-direction: column; gap: 10px;
     box-shadow: 0 1px 2px rgba(16,24,40,0.04);
 }
@@ -174,18 +178,18 @@ div[class*="st-key-toggle_"] button:hover {
 .kpi-label { font-size: 12.5px; font-weight: 600; color: #5B6B85; }
 .kpi-value { font-family: 'Manrope', sans-serif; font-weight: 700; font-size: 21px; color: #10233F; letter-spacing: -0.01em; }
 .pill { display: inline-flex; align-items: center; gap: 4px; width: fit-content; padding: 3px 10px; border-radius: 999px; font-size: 11.5px; font-weight: 600; }
-.pill-neutral { background: #F1F4F9; color: #5B6B85; }
+.pill-neutral { background: #DCEAFB; color: #5B6B85; }
 .pill-red { background: rgba(208,59,59,0.12); color: #B23A3A; }
 .pill-green { background: rgba(12,163,12,0.12); color: #0ca30c; }
 .pill-amber { background: rgba(250,178,25,0.16); color: #96650b; }
-.pill-blue { background: rgba(30,95,191,0.10); color: #1E5FBF; }
+.pill-blue { background: #0F3E7A; color: #FFFFFF; }
 
 .day-head { display: flex; align-items: center; justify-content: space-between; padding: 9px 4px; margin-top: 6px; }
 .day-head-label { font-size: 12px; font-weight: 700; color: #8592A8; letter-spacing: 0.03em; text-transform: uppercase; }
 .day-head.atrasado { background: rgba(208,59,59,0.07); border-radius: 8px; padding: 9px 10px; margin: 6px 0 0 0; }
 .day-head.atrasado .day-head-label { color: #B23A3A; }
 .extrato-row { display: flex; align-items: center; gap: 12px; padding: 11px 4px; border-top: 1px solid #F0F2F6; }
-.extrato-avatar { width: 30px; height: 30px; border-radius: 9px; background: #F1F4F9; display: flex; align-items: center; justify-content: center; color: #7C8AA0; flex-shrink: 0; }
+.extrato-avatar { width: 30px; height: 30px; border-radius: 9px; background: #DCEAFB; display: flex; align-items: center; justify-content: center; color: #7C8AA0; flex-shrink: 0; }
 .extrato-desc { font-size: 13.5px; font-weight: 600; color: #10233F; }
 .extrato-sub { font-size: 12px; color: #8592A8; margin-top: 1px; }
 .extrato-value { font-family: 'Manrope', sans-serif; font-weight: 700; font-size: 13.5px; color: #10233F; }
@@ -233,7 +237,14 @@ def cartoes_kpi(itens: list[dict], colunas: int | None = None) -> None:
     colunas = colunas or len(itens)
     partes = [f'<div class="kpi-grid" style="grid-template-columns:repeat({colunas}, minmax(0,1fr));">']
     for item in itens:
-        cor = item.get("cor", "#1E5FBF")
+        cor = item.get("cor", COR_MARCA)
+        # cor de marca (azul) ganha fundo sólido escuro + ícone branco; as
+        # demais cores (vermelho/verde/âmbar de status) mantêm o fundo
+        # clarinho de baixa opacidade, que já tem bom contraste nelas.
+        if cor in (COR_MARCA, "#1E5FBF"):
+            bg_icone, cor_icone = COR_MARCA, "#FFFFFF"
+        else:
+            bg_icone, cor_icone = f"{cor}18", cor
         icone_svg = ICONES.get(item.get("icone", ""), ICONES["check"])
         pill_html = ""
         if item.get("pill_texto"):
@@ -243,7 +254,7 @@ def cartoes_kpi(itens: list[dict], colunas: int | None = None) -> None:
             f"""
             <div class="kpi-card">
                 <div style="display:flex;align-items:center;gap:9px;">
-                    <div class="kpi-icon" style="background:{cor}18;color:{cor};">
+                    <div class="kpi-icon" style="background:{bg_icone};color:{cor_icone};">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">{icone_svg}</svg>
                     </div>
                     <span class="kpi-label">{item['label']}</span>
