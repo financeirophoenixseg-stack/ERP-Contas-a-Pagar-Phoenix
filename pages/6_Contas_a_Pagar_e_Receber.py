@@ -592,6 +592,97 @@ if st.button("Cadastrar", type="primary", disabled=not parcelas_preview or not d
             st.error(f"Lançamento criado, mas houve erro ao salvar o anexo: {e}")
 
 st.divider()
+st.subheader("Transferência entre contas")
+st.caption(
+    "Dinheiro saindo de uma conta bancária sua e entrando em outra (ex.: Sicoob → Bradesco). "
+    "Não é despesa nem receita — não entra no DRE, é só o dinheiro mudando de lugar."
+)
+
+if len(contas_bancarias) < 2:
+    st.info("Cadastre pelo menos 2 contas bancárias em **Configurações** para registrar transferências entre elas.")
+else:
+    col_t1, col_t2, col_t3, col_t4 = st.columns(4)
+    conta_origem_id = col_t1.selectbox(
+        "De (origem)", options=list(conta_bancaria_opcoes.keys()), format_func=lambda i: conta_bancaria_opcoes[i], key="transf_origem"
+    )
+    opcoes_destino = [c for c in conta_bancaria_opcoes if c != conta_origem_id]
+    conta_destino_id = col_t2.selectbox(
+        "Para (destino)", options=opcoes_destino, format_func=lambda i: conta_bancaria_opcoes[i], key="transf_destino"
+    )
+    valor_transferencia = _campo_valor(col_t3, "Valor (R$)", "transf_valor")
+    data_transferencia = col_t4.date_input("Data", value=date.today(), format="DD/MM/YYYY", key="transf_data")
+    descricao_transferencia = st.text_input("Descrição (opcional)", key="transf_descricao", placeholder="Ex.: reforço de caixa")
+
+    if st.button("Registrar transferência", type="primary", disabled=valor_transferencia <= 0, key="transf_registrar"):
+        try:
+            client.table("transferencias_contas").insert(
+                {
+                    "conta_origem_id": conta_origem_id,
+                    "conta_destino_id": conta_destino_id,
+                    "valor": valor_transferencia,
+                    "data_transferencia": data_transferencia.isoformat(),
+                    "descricao": descricao_transferencia.strip() or None,
+                }
+            ).execute()
+            st.success("Transferência registrada.")
+            st.rerun()
+        except Exception as e:
+            st.error(
+                f"Não deu pra registrar — rode a migração `migrations/012_transferencias_contas.sql` no Supabase antes. Erro: {e}"
+            )
+
+    try:
+        transferencias = (
+            client.table("transferencias_contas")
+            .select(
+                "id, valor, data_transferencia, descricao, status, "
+                "contas_bancarias!transferencias_contas_conta_origem_id_fkey(banco, agencia, conta), "
+                "destino:contas_bancarias!transferencias_contas_conta_destino_id_fkey(banco, agencia, conta)"
+            )
+            .order("data_transferencia", desc=True)
+            .limit(50)
+            .execute()
+            .data
+            or []
+        )
+    except Exception:
+        transferencias = None
+        st.info(
+            "Tabela de transferências ainda não existe no banco — rode a migração "
+            "`migrations/012_transferencias_contas.sql` no Supabase pra habilitar esta seção."
+        )
+
+    if transferencias:
+        st.dataframe(
+            [
+                {
+                    "Data": data_br(t["data_transferencia"]),
+                    "De": f"{t['contas_bancarias']['banco']}/{t['contas_bancarias']['agencia']}/{t['contas_bancarias']['conta']}" if t.get("contas_bancarias") else "-",
+                    "Para": f"{t['destino']['banco']}/{t['destino']['agencia']}/{t['destino']['conta']}" if t.get("destino") else "-",
+                    "Valor": moeda(t["valor"]),
+                    "Descrição": t["descricao"] or "-",
+                    "Status": t["status"],
+                }
+                for t in transferencias
+            ],
+            use_container_width=True,
+            hide_index=True,
+        )
+        opcoes_transf = {
+            t["id"]: f"{data_br(t['data_transferencia'])} — {moeda(t['valor'])}" for t in transferencias
+        }
+        col_del1, col_del2 = st.columns([3, 1])
+        transf_selecionada = col_del1.selectbox(
+            "Excluir transferência:", options=list(opcoes_transf.keys()), format_func=lambda i: opcoes_transf[i], key="transf_sel_excluir"
+        )
+        if col_del2.button("Excluir", key="transf_excluir_btn"):
+            client.table("transferencias_contas").delete().eq("id", transf_selecionada).execute()
+            st.success("Transferência excluída.")
+            st.rerun()
+    elif transferencias is not None:
+        st.caption("Nenhuma transferência registrada ainda.")
+
+st.divider()
 
 
 def _secao_anexos(lancamento_id: str, key_prefix: str):
@@ -684,7 +775,12 @@ with col_data_esp:
 
 query = (
     client.table("lancamentos_previstos")
-    .select("id, tipo, descricao, valor, data_vencimento, status, clientes(nome), fornecedores(nome)")
+    .select(
+        "id, empresa_id, tipo, descricao, valor, data_vencimento, data_pagamento, status, "
+        "cliente_id, fornecedor_id, plano_conta_id, conta_bancaria_id, grupo_id, "
+        "parcela_atual, parcela_total, clientes(nome), fornecedores(nome), empresas(nome), "
+        "plano_contas(codigo, nome), contas_bancarias(banco, agencia, conta)"
+    )
     .in_("status", ["previsto", "pago"])
 )
 if tipo_extrato == "A Pagar":
@@ -833,7 +929,7 @@ else:
                             <span>{html.escape(item['descricao'] or '-')}</span>
                             {pill_tipo}
                         </div>
-                        <div class="extrato-sub">{html.escape(terceiro)}</div>
+                        <div class="extrato-sub">{html.escape(terceiro)}{f' · parcela {item["parcela_atual"]}/{item["parcela_total"]}' if item.get('parcela_atual') else ''}</div>
                     </div>
                     {selo}
                     <span class="extrato-value" style="color:{cor_valor};min-width:110px;text-align:right;">{sinal}{moeda(abs(item['valor']))}</span>
@@ -848,24 +944,173 @@ else:
     opcoes_todos = {
         i["id"]: f"{data_br(i['data_vencimento'])} — {i['descricao']} — {moeda(i['valor'])}" for i in itens
     }
-    pendentes = [i for i in itens if i["status"] == "previsto"]
-    col_a, col_b, col_c, col_d = st.columns([3, 1, 1, 1])
-    selecionado = col_a.selectbox(
-        "Ação rápida em:", options=list(opcoes_todos.keys()), format_func=lambda i: opcoes_todos[i], key="extrato_sel_acao"
+    itens_por_id = {i["id"]: i for i in itens}
+    selecionado = st.selectbox(
+        "Ver detalhes de:", options=list(opcoes_todos.keys()), format_func=lambda i: opcoes_todos[i], key="extrato_sel_detalhe"
     )
-    if col_b.button("Marcar como pago", key="extrato_marcar_pago", disabled=selecionado not in {p["id"] for p in pendentes}):
-        client.table("lancamentos_previstos").update(
-            {"status": "pago", "data_pagamento": date.today().isoformat()}
-        ).eq("id", selecionado).execute()
-        st.success("Marcado como pago.")
-        st.rerun()
-    if col_c.button("Cancelar", key="extrato_cancelar", disabled=selecionado not in {p["id"] for p in pendentes}):
-        client.table("lancamentos_previstos").update({"status": "cancelado"}).eq("id", selecionado).execute()
-        st.success("Cancelado.")
-        st.rerun()
-    if col_d.button("📎 Anexos", key="extrato_toggle_anexos"):
-        st.session_state["extrato_anexos_abertos"] = not st.session_state.get("extrato_anexos_abertos", False)
 
-    if st.session_state.get("extrato_anexos_abertos") and selecionado:
+    if selecionado:
+        item_sel = itens_por_id[selecionado]
+        eh_previsto = item_sel["status"] == "previsto"
+
         with st.container(border=True):
-            _secao_anexos(selecionado, key_prefix=f"extrato_anexo_{selecionado}")
+            empresa_nome = (item_sel.get("empresas") or {}).get("nome") or "-"
+            terceiro_nome = (
+                (item_sel.get("clientes") or {}).get("nome") or (item_sel.get("fornecedores") or {}).get("nome") or "-"
+            )
+            plano_nome = (item_sel.get("plano_contas") or {}).get("nome")
+            conta_banc = item_sel.get("contas_bancarias")
+            conta_banc_txt = (
+                f"{conta_banc['banco']}/{conta_banc['agencia']}/{conta_banc['conta']}" if conta_banc else "não vinculada"
+            )
+
+            col_i1, col_i2, col_i3 = st.columns(3)
+            col_i1.markdown(f"**Empresa**  \n{empresa_nome}")
+            col_i1.markdown(f"**Cliente/Fornecedor**  \n{terceiro_nome}")
+            col_i2.markdown(f"**Vencimento**  \n{data_br(item_sel['data_vencimento'])}")
+            col_i2.markdown(
+                f"**Pago em**  \n{data_br(item_sel['data_pagamento']) if item_sel.get('data_pagamento') else '-'}"
+            )
+            col_i3.markdown(f"**Conta bancária**  \n{conta_banc_txt}")
+            col_i3.markdown(f"**Plano de contas**  \n{plano_nome or '-'}")
+            if item_sel.get("parcela_atual"):
+                st.caption(f"📑 Parcela {item_sel['parcela_atual']}/{item_sel['parcela_total']}")
+
+            st.markdown("")
+            col_b, col_c, col_d, col_e = st.columns(4)
+            if col_b.button(
+                "Marcar como pago", key="detalhe_marcar_pago", disabled=not eh_previsto, use_container_width=True
+            ):
+                client.table("lancamentos_previstos").update(
+                    {"status": "pago", "data_pagamento": date.today().isoformat()}
+                ).eq("id", selecionado).execute()
+                st.success("Marcado como pago.")
+                st.rerun()
+            if col_c.button("Cancelar", key="detalhe_cancelar", disabled=not eh_previsto, use_container_width=True):
+                client.table("lancamentos_previstos").update({"status": "cancelado"}).eq("id", selecionado).execute()
+                st.success("Cancelado.")
+                st.rerun()
+            tem_grupo = bool(item_sel.get("grupo_id"))
+            if col_d.button(
+                "Cancelar demais parcelas",
+                key="detalhe_cancelar_demais",
+                disabled=not tem_grupo,
+                use_container_width=True,
+                help="Cancela as próximas parcelas ainda previstas do mesmo grupo (parcelamento/recorrência).",
+            ):
+                client.table("lancamentos_previstos").update({"status": "cancelado"}).eq(
+                    "grupo_id", item_sel["grupo_id"]
+                ).eq("status", "previsto").execute()
+                st.success("Parcelas restantes canceladas.")
+                st.rerun()
+            if col_e.button("🗑️ Excluir", key="detalhe_excluir_toggle", use_container_width=True):
+                st.session_state["confirmar_exclusao_id"] = selecionado
+
+            if st.session_state.get("confirmar_exclusao_id") == selecionado:
+                st.warning(
+                    "Excluir remove o lançamento e os anexos vinculados por completo — diferente de Cancelar, "
+                    "não dá pra desfazer. Tem certeza?"
+                )
+                col_conf1, col_conf2 = st.columns(2)
+                if col_conf1.button("Sim, excluir definitivamente", key="detalhe_excluir_confirmar", type="primary"):
+                    anexos_do_lancamento = (
+                        client.table("anexos").select("id, storage_path").eq("lancamento_previsto_id", selecionado).execute().data
+                        or []
+                    )
+                    for a in anexos_do_lancamento:
+                        try:
+                            client.storage.from_(BUCKET_ANEXOS).remove([a["storage_path"]])
+                        except Exception:
+                            pass
+                        client.table("anexos").delete().eq("id", a["id"]).execute()
+                        if sharepoint.esta_configurado():
+                            try:
+                                sharepoint.remover_arquivo(a["storage_path"])
+                            except Exception:
+                                pass
+                    client.table("lancamentos_previstos").delete().eq("id", selecionado).execute()
+                    del st.session_state["confirmar_exclusao_id"]
+                    st.success("Lançamento excluído.")
+                    st.rerun()
+                if col_conf2.button("Cancelar exclusão", key="detalhe_excluir_cancelar"):
+                    del st.session_state["confirmar_exclusao_id"]
+                    st.rerun()
+
+            with st.expander("✏️ Editar lançamento"):
+                with st.form(key=f"form_editar_{selecionado}"):
+                    nova_descricao = st.text_input("Descrição", value=item_sel["descricao"])
+                    col_e1, col_e2 = st.columns(2)
+                    novo_valor = _campo_valor(col_e1, "Valor (R$)", f"editar_valor_{selecionado}", valor_inicial=item_sel["valor"])
+                    nova_data_vencimento = col_e2.date_input(
+                        "Vencimento", value=date.fromisoformat(item_sel["data_vencimento"]), format="DD/MM/YYYY"
+                    )
+
+                    ids_empresa = list(empresas_por_id.keys())
+                    idx_empresa = ids_empresa.index(item_sel["empresa_id"]) if item_sel["empresa_id"] in ids_empresa else 0
+                    nova_empresa_id = st.selectbox(
+                        "Empresa", options=ids_empresa, format_func=lambda i: empresas_por_id[i], index=idx_empresa
+                    )
+
+                    opcoes_conta_edit = ["(nenhuma)"] + list(conta_bancaria_opcoes.keys())
+                    idx_conta = (
+                        opcoes_conta_edit.index(item_sel["conta_bancaria_id"])
+                        if item_sel.get("conta_bancaria_id") in opcoes_conta_edit
+                        else 0
+                    )
+                    nova_conta_bancaria_id = st.selectbox(
+                        "Conta bancária",
+                        options=opcoes_conta_edit,
+                        format_func=lambda i: "(nenhuma)" if i == "(nenhuma)" else conta_bancaria_opcoes[i],
+                        index=idx_conta,
+                    )
+
+                    opcoes_plano_edit = ["(nenhuma)"] + list(contas_opcoes.keys())
+                    idx_plano = (
+                        opcoes_plano_edit.index(item_sel["plano_conta_id"])
+                        if item_sel.get("plano_conta_id") in opcoes_plano_edit
+                        else 0
+                    )
+                    novo_plano_conta_id = st.selectbox(
+                        "Conta do plano de contas",
+                        options=opcoes_plano_edit,
+                        format_func=lambda i: "(nenhuma)" if i == "(nenhuma)" else contas_opcoes[i],
+                        index=idx_plano,
+                    )
+
+                    if item_sel["tipo"] == "pagar":
+                        opcoes_terc_edit = ["(nenhum)"] + [f["id"] for f in fornecedores]
+                        nomes_terc_edit = {f["id"]: f["nome"] for f in fornecedores}
+                        valor_atual_terc = item_sel.get("fornecedor_id") or "(nenhum)"
+                    else:
+                        opcoes_terc_edit = ["(nenhum)"] + [c["id"] for c in clientes]
+                        nomes_terc_edit = {c["id"]: c["nome"] for c in clientes}
+                        valor_atual_terc = item_sel.get("cliente_id") or "(nenhum)"
+                    idx_terc = opcoes_terc_edit.index(valor_atual_terc) if valor_atual_terc in opcoes_terc_edit else 0
+                    novo_terceiro_edit = st.selectbox(
+                        "Cliente" if item_sel["tipo"] == "receber" else "Fornecedor",
+                        options=opcoes_terc_edit,
+                        format_func=lambda i: "(nenhum)" if i == "(nenhum)" else nomes_terc_edit[i],
+                        index=idx_terc,
+                    )
+
+                    salvar_edicao = st.form_submit_button("Salvar alterações", type="primary")
+
+                if salvar_edicao:
+                    dados_atualizados = {
+                        "descricao": nova_descricao.strip() or item_sel["descricao"],
+                        "valor": novo_valor if novo_valor > 0 else item_sel["valor"],
+                        "data_vencimento": nova_data_vencimento.isoformat(),
+                        "empresa_id": nova_empresa_id,
+                        "conta_bancaria_id": None if nova_conta_bancaria_id == "(nenhuma)" else nova_conta_bancaria_id,
+                        "plano_conta_id": None if novo_plano_conta_id == "(nenhuma)" else novo_plano_conta_id,
+                    }
+                    if item_sel["tipo"] == "pagar":
+                        dados_atualizados["fornecedor_id"] = None if novo_terceiro_edit == "(nenhum)" else novo_terceiro_edit
+                    else:
+                        dados_atualizados["cliente_id"] = None if novo_terceiro_edit == "(nenhum)" else novo_terceiro_edit
+                    client.table("lancamentos_previstos").update(dados_atualizados).eq("id", selecionado).execute()
+                    st.success("Lançamento atualizado.")
+                    st.rerun()
+
+            st.markdown("##### 📎 Anexos")
+            _secao_anexos(selecionado, key_prefix=f"detalhe_anexo_{selecionado}")
