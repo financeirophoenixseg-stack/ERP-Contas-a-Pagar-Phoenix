@@ -97,6 +97,34 @@ h1, h2, h3 { font-family: 'Manrope', sans-serif; letter-spacing: -0.01em; }
     border-radius: 8px;
     font-weight: 500;
 }
+
+/* Filtros estilo "pill" (Ver / Período em Contas a Pagar e Receber) —
+   botões com key "pill_*" ganham formato de cápsula, bem mais compacto
+   que um botão normal, pra parecer filtro de app financeiro. */
+div[class*="st-key-pill_"] .stButton button {
+    border-radius: 999px;
+    padding: 3px 14px;
+    min-height: 0;
+    font-size: 12.5px;
+}
+
+/* Cartão de ação da IA (Ler boleto / Processar comprovantes em lote) —
+   o botão de abrir/fechar fica discreto, sem borda própria, já que o
+   card inteiro (com borda) é que dá a moldura visual. */
+div[class*="st-key-cartao_ia_"] {
+    padding: 6px 4px;
+}
+div[class*="st-key-toggle_"] button {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    font-size: 18px;
+    color: #8592A8;
+}
+div[class*="st-key-toggle_"] button:hover {
+    background: rgba(30,95,191,0.08);
+    color: #1E5FBF;
+}
 [data-testid="stTextInput"] input,
 [data-testid="stNumberInput"] input,
 [data-testid="stDateInput"] input,

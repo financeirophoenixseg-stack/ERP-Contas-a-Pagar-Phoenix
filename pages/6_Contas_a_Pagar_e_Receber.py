@@ -68,6 +68,65 @@ def _campo_valor(coluna, label: str, key: str, valor_inicial: float = 0.0) -> fl
         valor = 0.0
     return valor
 
+
+def _pills(opcoes: list[str], key_estado: str, key_prefix: str) -> str:
+    """Linha de botões estilo 'pill' (o selecionado em azul sólido, os
+    demais neutros) — substitui um st.radio horizontal por algo mais
+    parecido com filtro de app financeiro. O estado escolhido persiste em
+    st.session_state[key_estado] entre reruns."""
+    if key_estado not in st.session_state:
+        st.session_state[key_estado] = opcoes[0]
+    cols = st.columns(len(opcoes))
+    for col, opcao in zip(cols, opcoes):
+        ativo = st.session_state[key_estado] == opcao
+        if col.button(
+            opcao,
+            key=f"pill_{key_prefix}_{opcao}",
+            type="primary" if ativo else "secondary",
+            use_container_width=True,
+        ):
+            st.session_state[key_estado] = opcao
+            st.rerun()
+    return st.session_state[key_estado]
+
+
+def _cartao_acao_ia(key: str, icone_svg: str, titulo: str, subtitulo: str) -> bool:
+    """Cartão de ação estilo botão grande (ícone + título + subtítulo),
+    usado pros dois atalhos de IA no topo da página. Clicar expande/recolhe
+    o conteúdo associado (mantido em st.session_state)."""
+    estado_key = f"aberto_{key}"
+    aberto = st.session_state.get(estado_key, False)
+    with st.container(key=f"cartao_ia_{key}", border=True):
+        col_icone, col_texto, col_seta = st.columns([0.09, 0.82, 0.09])
+        with col_icone:
+            st.markdown(
+                layout._compacto(
+                    f"""
+                    <div class="kpi-icon" style="width:38px;height:38px;background:rgba(30,95,191,0.10);color:#1E5FBF;">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">{icone_svg}</svg>
+                    </div>
+                    """
+                ),
+                unsafe_allow_html=True,
+            )
+        with col_texto:
+            st.markdown(
+                layout._compacto(
+                    f"""
+                    <div style="line-height:1.3;">
+                        <div style="font-weight:700;color:#10233F;font-size:14.5px;">{titulo}</div>
+                        <div style="font-size:12.5px;color:#8592A8;">{subtitulo}</div>
+                    </div>
+                    """
+                ),
+                unsafe_allow_html=True,
+            )
+        with col_seta:
+            if st.button("˅" if aberto else "›", key=f"toggle_{key}", use_container_width=True):
+                st.session_state[estado_key] = not aberto
+                st.rerun()
+    return aberto
+
 st.set_page_config(page_title="Contas a Pagar e Receber", layout="wide")
 layout.aplicar_logo()
 st.title("Contas a Pagar e Receber")
@@ -96,7 +155,26 @@ contas_bancarias = (
 )
 nomes_fornecedor_todos = {f["id"]: f["nome"] for f in fornecedores}
 
-with st.expander("📄 Ler boleto/guia automaticamente (via IA)", expanded=bool(st.session_state.get("boleto_lido"))):
+if st.session_state.get("boleto_lido"):
+    st.session_state["aberto_ia_boleto"] = True
+
+col_card_ia1, col_card_ia2 = st.columns(2)
+with col_card_ia1:
+    aberto_boleto = _cartao_acao_ia(
+        "ia_boleto",
+        layout.ICONES.get("pagar", ""),
+        "Ler boleto com IA",
+        "Sobe o PDF e já preenche valor, vencimento e fornecedor",
+    )
+with col_card_ia2:
+    aberto_comprovantes = _cartao_acao_ia(
+        "ia_comprovantes",
+        layout.ICONES.get("check", ""),
+        "Processar comprovantes em lote",
+        "Sobe vários PDFs — a IA vincula e já dá baixa sozinha",
+    )
+
+if aberto_boleto:
     if not leitor_boleto.esta_configurado():
         st.caption(
             "Configure `ANTHROPIC_API_KEY` no arquivo `.env` para habilitar a leitura automática de boletos. "
@@ -228,8 +306,7 @@ with st.expander("📄 Ler boleto/guia automaticamente (via IA)", expanded=bool(
                 del st.session_state["boleto_lido_arquivo"]
                 st.rerun()
 
-st.divider()
-with st.expander("📎 Enviar vários comprovantes de uma vez (IA vincula e dá baixa sozinha)", expanded=False):
+if aberto_comprovantes:
     if not leitor_comprovante.esta_configurado():
         st.caption("Configure `ANTHROPIC_API_KEY` no arquivo `.env` para habilitar a leitura automática de comprovantes.")
     else:
@@ -384,86 +461,89 @@ with st.expander("📎 Enviar vários comprovantes de uma vez (IA vincula e dá 
                     st.rerun()
 
 st.divider()
-st.subheader("Novo lançamento")
-tipo_label = st.radio("Tipo", ["Pagar (despesa)", "Receber (receita)"], horizontal=True)
-tipo = "pagar" if tipo_label.startswith("Pagar") else "receber"
+col_titulo_novo, col_toggle_novo = st.columns([3, 1])
+col_titulo_novo.subheader("Novo lançamento")
+with col_toggle_novo:
+    tipo_label = _pills(["Pagar", "Receber"], "novo_lanc_tipo_estado", "novo_lanc_tipo")
+tipo = "pagar" if tipo_label == "Pagar" else "receber"
 
-col1, col2 = st.columns(2)
+col1, col2, col3, col4 = st.columns(4)
 empresa_id = col1.selectbox("Empresa", options=list(empresas_por_id.keys()), format_func=lambda i: empresas_por_id[i])
 descricao = col2.text_input("Descrição", placeholder="Aluguel do escritório" if tipo == "pagar" else "Comissão prevista")
+valor_avulso = _campo_valor(col3, "Valor (R$)", "valor_avulso")
+data_vencimento_avulso = col4.date_input("Vencimento", value=date.today(), format="DD/MM/YYYY", key="vencimento_avulso")
 
-col3, col4 = st.columns(2)
-if tipo == "pagar":
-    opcoes_fornecedor = ["(nenhum)", "+ Novo fornecedor"] + [f["id"] for f in fornecedores]
-    nomes_fornecedor = {f["id"]: f["nome"] for f in fornecedores}
-    escolha_terceiro = col3.selectbox(
-        "Fornecedor",
-        options=opcoes_fornecedor,
-        format_func=lambda i: i if i in ("(nenhum)", "+ Novo fornecedor") else nomes_fornecedor[i],
+with st.expander("Mais opções — parcelar/recorrência, fornecedor/cliente, conta e anexo"):
+    if tipo == "pagar":
+        opcoes_fornecedor = ["(nenhum)", "+ Novo fornecedor"] + [f["id"] for f in fornecedores]
+        nomes_fornecedor = {f["id"]: f["nome"] for f in fornecedores}
+        col_terc1, col_terc2 = st.columns(2)
+        escolha_terceiro = col_terc1.selectbox(
+            "Fornecedor",
+            options=opcoes_fornecedor,
+            format_func=lambda i: i if i in ("(nenhum)", "+ Novo fornecedor") else nomes_fornecedor[i],
+        )
+        novo_terceiro_nome = col_terc2.text_input("Nome do novo fornecedor") if escolha_terceiro == "+ Novo fornecedor" else None
+    else:
+        opcoes_terceiro = ["(nenhum)", "+ Novo cliente"] + [c["id"] for c in clientes]
+        nomes_cliente = {c["id"]: c["nome"] for c in clientes}
+        col_terc1, col_terc2 = st.columns(2)
+        escolha_terceiro = col_terc1.selectbox(
+            "Cliente",
+            options=opcoes_terceiro,
+            format_func=lambda i: i if i in ("(nenhum)", "+ Novo cliente") else nomes_cliente[i],
+        )
+        novo_terceiro_nome = col_terc2.text_input("Nome do novo cliente") if escolha_terceiro == "+ Novo cliente" else None
+
+    col_conta1, col_conta2 = st.columns(2)
+    contas_opcoes = {c["id"]: f'{c["codigo"]} — {c["nome"]}' for c in contas_plano}
+    plano_conta_id = col_conta1.selectbox(
+        "Conta do plano de contas", options=["(nenhuma)"] + list(contas_opcoes.keys()),
+        format_func=lambda i: "(nenhuma)" if i == "(nenhuma)" else contas_opcoes[i],
     )
-    novo_terceiro_nome = col3.text_input("Nome do novo fornecedor") if escolha_terceiro == "+ Novo fornecedor" else None
-else:
-    opcoes_terceiro = ["(nenhum)", "+ Novo cliente"] + [c["id"] for c in clientes]
-    nomes_cliente = {c["id"]: c["nome"] for c in clientes}
-    escolha_terceiro = col3.selectbox(
-        "Cliente",
-        options=opcoes_terceiro,
-        format_func=lambda i: i if i in ("(nenhum)", "+ Novo cliente") else nomes_cliente[i],
-    )
-    novo_terceiro_nome = col3.text_input("Nome do novo cliente") if escolha_terceiro == "+ Novo cliente" else None
-
-contas_opcoes = {c["id"]: f'{c["codigo"]} — {c["nome"]}' for c in contas_plano}
-plano_conta_id = col4.selectbox(
-    "Conta do plano de contas", options=["(nenhuma)"] + list(contas_opcoes.keys()),
-    format_func=lambda i: "(nenhuma)" if i == "(nenhuma)" else contas_opcoes[i],
-)
-
-conta_bancaria_opcoes = {c["id"]: f'{c["banco"]}/{c["agencia"]}/{c["conta"]}' for c in contas_bancarias}
-conta_bancaria_id = st.selectbox(
-    "Conta bancária esperada (opcional)",
-    options=["(nenhuma)"] + list(conta_bancaria_opcoes.keys()),
-    format_func=lambda i: "(nenhuma)" if i == "(nenhuma)" else conta_bancaria_opcoes[i],
-)
-
-modo = st.radio("Como é esse lançamento?", ["Avulso", "Parcelado", "Fixo (recorrente todo mês)"], horizontal=True)
-
-parcelas_preview = []
-if modo == "Avulso":
-    c1, c2 = st.columns(2)
-    valor = _campo_valor(c1, "Valor (R$)", "valor_avulso")
-    data_vencimento = c2.date_input("Data de vencimento", value=date.today(), format="DD/MM/YYYY")
-    if valor > 0:
-        parcelas_preview = [
-            ParcelaGerada(parcela_atual=None, parcela_total=None, valor=valor, data_vencimento=data_vencimento)
-        ]
-elif modo == "Parcelado":
-    c1, c2, c3 = st.columns(3)
-    valor_total = _campo_valor(c1, "Valor total (R$)", "valor_parcelado")
-    num_parcelas = c2.number_input("Número de parcelas", min_value=1, step=1, value=2)
-    data_primeira = c3.date_input("Vencimento da 1ª parcela", value=date.today(), format="DD/MM/YYYY")
-    if valor_total > 0:
-        parcelas_preview = gerar_parcelas(valor_total, int(num_parcelas), data_primeira)
-else:
-    c1, c2, c3 = st.columns(3)
-    valor_mensal = _campo_valor(c1, "Valor mensal (R$)", "valor_fixo")
-    data_primeiro_vencimento = c2.date_input("1º vencimento", value=date.today(), format="DD/MM/YYYY")
-    meses_a_gerar = c3.number_input("Gerar quantos meses à frente?", min_value=1, step=1, value=12)
-    if valor_mensal > 0:
-        parcelas_preview = gerar_recorrencia(valor_mensal, data_primeiro_vencimento, int(meses_a_gerar))
-
-if parcelas_preview:
-    st.caption(f"Prévia: {len(parcelas_preview)} lançamento(s) serão criados.")
-    st.dataframe(
-        [{"Parcela": f"{p.parcela_atual}/{p.parcela_total}" if p.parcela_atual else "-", "Vencimento": data_br(p.data_vencimento), "Valor": moeda(p.valor)} for p in parcelas_preview],
-        use_container_width=True,
-        hide_index=True,
+    conta_bancaria_opcoes = {c["id"]: f'{c["banco"]}/{c["agencia"]}/{c["conta"]}' for c in contas_bancarias}
+    conta_bancaria_id = col_conta2.selectbox(
+        "Conta bancária esperada (opcional)",
+        options=["(nenhuma)"] + list(conta_bancaria_opcoes.keys()),
+        format_func=lambda i: "(nenhuma)" if i == "(nenhuma)" else conta_bancaria_opcoes[i],
     )
 
-arquivo_anexo = st.file_uploader(
-    "Anexar boleto/comprovante (opcional)",
-    key="anexo_novo_lancamento",
-    help="Fica salvo já vinculado ao lançamento (na 1ª parcela, se for parcelado/fixo).",
-)
+    modo = st.radio("Como é esse lançamento?", ["Avulso", "Parcelado", "Fixo (recorrente todo mês)"], horizontal=True)
+
+    parcelas_preview = []
+    if modo == "Avulso":
+        if valor_avulso > 0:
+            parcelas_preview = [
+                ParcelaGerada(parcela_atual=None, parcela_total=None, valor=valor_avulso, data_vencimento=data_vencimento_avulso)
+            ]
+    elif modo == "Parcelado":
+        c1, c2, c3 = st.columns(3)
+        valor_total = _campo_valor(c1, "Valor total (R$)", "valor_parcelado")
+        num_parcelas = c2.number_input("Número de parcelas", min_value=1, step=1, value=2)
+        data_primeira = c3.date_input("Vencimento da 1ª parcela", value=date.today(), format="DD/MM/YYYY")
+        if valor_total > 0:
+            parcelas_preview = gerar_parcelas(valor_total, int(num_parcelas), data_primeira)
+    else:
+        c1, c2, c3 = st.columns(3)
+        valor_mensal = _campo_valor(c1, "Valor mensal (R$)", "valor_fixo")
+        data_primeiro_vencimento = c2.date_input("1º vencimento", value=date.today(), format="DD/MM/YYYY")
+        meses_a_gerar = c3.number_input("Gerar quantos meses à frente?", min_value=1, step=1, value=12)
+        if valor_mensal > 0:
+            parcelas_preview = gerar_recorrencia(valor_mensal, data_primeiro_vencimento, int(meses_a_gerar))
+
+    if parcelas_preview:
+        st.caption(f"Prévia: {len(parcelas_preview)} lançamento(s) serão criados.")
+        st.dataframe(
+            [{"Parcela": f"{p.parcela_atual}/{p.parcela_total}" if p.parcela_atual else "-", "Vencimento": data_br(p.data_vencimento), "Valor": moeda(p.valor)} for p in parcelas_preview],
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    arquivo_anexo = st.file_uploader(
+        "Anexar boleto/comprovante (opcional)",
+        key="anexo_novo_lancamento",
+        help="Fica salvo já vinculado ao lançamento (na 1ª parcela, se for parcelado/fixo).",
+    )
 
 if st.button("Cadastrar", type="primary", disabled=not parcelas_preview or not descricao.strip()):
     cliente_id = fornecedor_id = None
@@ -606,19 +686,22 @@ def _secao_anexos(lancamento_id: str, key_prefix: str):
 
 st.subheader("Extrato")
 
-col_tipo, col_periodo = st.columns([1, 2])
-tipo_extrato = col_tipo.radio("Ver", ["Tudo", "A Pagar", "A Receber"], horizontal=True, key="extrato_tipo")
-periodo = col_periodo.radio(
-    "Período",
-    ["Todos", "Atrasados", "Hoje", "Esta semana", "Este mês", "Data específica"],
-    horizontal=True,
-    key="extrato_periodo",
-)
-data_especifica = None
-if periodo == "Data específica":
-    data_especifica = st.date_input(
-        "Escolher data", value=date.today(), format="DD/MM/YYYY", key="extrato_data_especifica"
+col_ver, col_badge_topo = st.columns([3, 1])
+with col_ver:
+    tipo_extrato = _pills(["Tudo", "A Pagar", "A Receber"], "extrato_tipo_estado", "extrato_tipo")
+
+col_periodo, col_data_esp, col_exp1, col_exp2 = st.columns([2.5, 1.1, 0.85, 0.85])
+with col_periodo:
+    periodo = _pills(
+        ["Todos", "Atrasados", "Hoje", "Esta semana", "Este mês"], "extrato_periodo_estado", "extrato_periodo"
     )
+with col_data_esp:
+    usar_data_especifica = st.checkbox("Data específica", key="extrato_usar_data_especifica")
+    data_especifica = None
+    if usar_data_especifica:
+        data_especifica = st.date_input(
+            "Data", value=date.today(), format="DD/MM/YYYY", key="extrato_data_especifica", label_visibility="collapsed"
+        )
 
 query = (
     client.table("lancamentos_previstos")
@@ -631,7 +714,9 @@ elif tipo_extrato == "A Receber":
     query = query.eq("tipo", "receber")
 
 hoje = date.today()
-if periodo == "Atrasados":
+if usar_data_especifica and data_especifica:
+    query = query.eq("data_vencimento", data_especifica.isoformat())
+elif periodo == "Atrasados":
     query = query.eq("status", "previsto").lt("data_vencimento", hoje.isoformat())
 elif periodo == "Hoje":
     query = query.eq("data_vencimento", hoje.isoformat())
@@ -643,10 +728,31 @@ elif periodo == "Este mês":
     inicio_mes = hoje.replace(day=1)
     fim_mes = hoje.replace(day=calendar.monthrange(hoje.year, hoje.month)[1])
     query = query.gte("data_vencimento", inicio_mes.isoformat()).lte("data_vencimento", fim_mes.isoformat())
-elif periodo == "Data específica" and data_especifica:
-    query = query.eq("data_vencimento", data_especifica.isoformat())
 
 itens = query.order("data_vencimento").execute().data or []
+
+# selo "N atrasada(s)" no topo — conta os atrasados dentro do tipo escolhido
+# (Tudo/A Pagar/A Receber), independente do filtro de período, pra servir
+# de atalho visual mesmo quando o período selecionado não é "Atrasados".
+atrasados_query = (
+    client.table("lancamentos_previstos")
+    .select("id")
+    .eq("status", "previsto")
+    .lt("data_vencimento", hoje.isoformat())
+)
+if tipo_extrato == "A Pagar":
+    atrasados_query = atrasados_query.eq("tipo", "pagar")
+elif tipo_extrato == "A Receber":
+    atrasados_query = atrasados_query.eq("tipo", "receber")
+qtd_atrasados = len(atrasados_query.execute().data or [])
+with col_badge_topo:
+    if qtd_atrasados:
+        st.markdown(
+            layout._compacto(
+                f'<div style="text-align:right;padding-top:8px;"><span class="pill pill-red">{qtd_atrasados} atrasada(s)</span></div>'
+            ),
+            unsafe_allow_html=True,
+        )
 
 linhas_export = [
     {
@@ -659,23 +765,26 @@ linhas_export = [
     }
     for i in itens
 ]
-col_exp1, col_exp2, _ = st.columns([1, 1, 3])
-col_exp1.download_button(
-    "⬇️ Exportar Excel",
-    data=exportacao.gerar_excel(linhas_export, "Extrato"),
-    file_name=f"extrato_{hoje.isoformat()}.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    disabled=not linhas_export,
-    key="extrato_export_excel",
-)
-col_exp2.download_button(
-    "⬇️ Exportar PDF",
-    data=exportacao.gerar_pdf(linhas_export, f"Extrato — {tipo_extrato} — {periodo}"),
-    file_name=f"extrato_{hoje.isoformat()}.pdf",
-    mime="application/pdf",
-    disabled=not linhas_export,
-    key="extrato_export_pdf",
-)
+with col_exp1:
+    st.download_button(
+        "⬇️ Excel",
+        data=exportacao.gerar_excel(linhas_export, "Extrato"),
+        file_name=f"extrato_{hoje.isoformat()}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        disabled=not linhas_export,
+        key="extrato_export_excel",
+        use_container_width=True,
+    )
+with col_exp2:
+    st.download_button(
+        "⬇️ PDF",
+        data=exportacao.gerar_pdf(linhas_export, f"Extrato — {tipo_extrato} — {periodo}"),
+        file_name=f"extrato_{hoje.isoformat()}.pdf",
+        mime="application/pdf",
+        disabled=not linhas_export,
+        key="extrato_export_pdf",
+        use_container_width=True,
+    )
 
 if not itens:
     st.info("Nenhum lançamento neste filtro.")
@@ -690,13 +799,20 @@ else:
         itens_dia = grupos[dia_iso]
         atrasado = dia < hoje and any(i["status"] == "previsto" for i in itens_dia)
         classe_head = "day-head atrasado" if atrasado else "day-head"
-        pill_atraso = (
-            f'<span class="pill pill-red">{(hoje - dia).days} dia(s) em atraso</span>' if atrasado else ""
-        )
+        if atrasado:
+            rotulo_dia = (
+                f'<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+                f'stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;">{layout.ICONES["triangulo"]}</svg>'
+                f'Atrasado · {dia.day:02d} de {MESES_PT[dia.month - 1]}'
+            )
+            pill_atraso = f'<span class="pill pill-red">{(hoje - dia).days} dia(s) em atraso</span>'
+        else:
+            rotulo_dia = _rotulo_dia(dia, hoje)
+            pill_atraso = ""
         partes.append(
             f"""
             <div class="{classe_head}">
-                <span class="day-head-label">{_rotulo_dia(dia, hoje)}</span>
+                <span class="day-head-label">{rotulo_dia}</span>
                 {pill_atraso}
             </div>
             """
@@ -704,27 +820,44 @@ else:
         for item in itens_dia:
             terceiro = (item.get("clientes") or {}).get("nome") or (item.get("fornecedores") or {}).get("nome") or "-"
             eh_receber = item["tipo"] == "receber"
-            cor_valor = "#0ca30c" if eh_receber else "#10233F"
+            item_atrasado = item["status"] == "previsto" and item["data_vencimento"] < hoje.isoformat()
             sinal = "+" if eh_receber else "-"
-            icone = layout.ICONES["receber"] if eh_receber else layout.ICONES["pagar"]
+            pill_tipo = (
+                f'<span class="pill pill-neutral">{"a receber" if eh_receber else "a pagar"}</span>'
+            )
+
             if item["status"] == "pago":
+                icone = layout.ICONES["check"]
+                cor_icone = "#0ca30c"
+                cor_valor = "#0ca30c" if eh_receber else "#10233F"
                 selo = '<span class="pill pill-green">pago</span>'
-            elif item["status"] == "previsto" and item["data_vencimento"] < hoje.isoformat():
-                selo = '<span class="pill pill-red">atrasado</span>'
+            elif item_atrasado:
+                dias_atraso_item = (hoje - date.fromisoformat(item["data_vencimento"])).days
+                icone = layout.ICONES["receber"] if eh_receber else layout.ICONES["pagar"]
+                cor_icone = "#B23A3A"
+                cor_valor = "#B23A3A"
+                selo = f'<span class="pill pill-red">{dias_atraso_item} dia(s) em atraso</span>'
             else:
+                icone = layout.ICONES["receber"] if eh_receber else layout.ICONES["pagar"]
+                cor_icone = "#0ca30c" if eh_receber else "#7C8AA0"
+                cor_valor = "#0ca30c" if eh_receber else "#10233F"
                 selo = '<span class="pill pill-neutral">previsto</span>'
+
             partes.append(
                 f"""
                 <div class="extrato-row">
-                    <div class="extrato-avatar">
+                    <div class="extrato-avatar" style="color:{cor_icone};">
                         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">{icone}</svg>
                     </div>
                     <div style="flex:1;">
-                        <div class="extrato-desc">{html.escape(item['descricao'] or '-')}</div>
+                        <div class="extrato-desc" style="display:flex;align-items:center;gap:7px;">
+                            <span>{html.escape(item['descricao'] or '-')}</span>
+                            {pill_tipo}
+                        </div>
                         <div class="extrato-sub">{html.escape(terceiro)}</div>
                     </div>
                     {selo}
-                    <span class="extrato-value" style="color:{cor_valor};min-width:100px;text-align:right;">{sinal}{moeda(abs(item['valor']))}</span>
+                    <span class="extrato-value" style="color:{cor_valor};min-width:110px;text-align:right;">{sinal}{moeda(abs(item['valor']))}</span>
                 </div>
                 """
             )
