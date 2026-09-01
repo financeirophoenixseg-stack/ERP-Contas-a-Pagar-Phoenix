@@ -19,14 +19,27 @@ Fluxo (documentado em https://docs.pluggy.ai):
 5. `listar_transacoes(account_id, desde)` — busca o extrato, no mesmo
    formato que o importador de OFX já processa.
 
-Nada disso foi testado contra a API real ainda — só existe conta de
-desenvolvedor na Pluggy quando o usuário se cadastrar. Ver PLANO.md."""
+Validado contra uma conta real (Sicoob) em 01/09/2026 — achado real: o
+endpoint `/transactions` (v1) está descontinuado (410 Gone), a API
+exige `/v2/transactions`. Diferenças confirmadas na prática (a doc
+pública nem sempre reflete isso):
+- Não aceita `from`/`to`/`pageSize` como parâmetro — só `accountId`.
+  O filtro por data é feito aqui do lado de cá, parando de paginar
+  assim que a página trouxer uma transação mais antiga que `desde`
+  (as páginas vêm em ordem decrescente de data).
+- Paginação por cursor: cada resposta trage um campo `next` (querystring
+  pronta pra próxima página) quando há mais dados; ausente/None na
+  última página.
+- Campo de valor é `amount` (positivo=crédito, negativo=débito, igual
+  ao `valor` que o resto do sistema já usa) e de data é `date`
+  (formato completo com hora/timezone, ex. '2026-09-01T03:00:00.000Z')."""
 
 from __future__ import annotations
 
 import os
 import time
 from dataclasses import dataclass
+from datetime import date as _date
 
 import requests
 
@@ -112,20 +125,45 @@ class TransacaoPluggy:
     valor: float
 
 
-def listar_transacoes(account_id: str, desde: str | None = None) -> list[TransacaoPluggy]:
+def listar_transacoes(account_id: str, desde: str | None = None, max_paginas: int = 20) -> list[TransacaoPluggy]:
     """Busca o extrato de uma conta (opcionalmente a partir de uma data,
     'AAAA-MM-DD') — mesmo formato que o importador de OFX processa
-    (data/descrição/valor), pra alimentar o mesmo motor de conciliação."""
+    (data/descrição/valor), pra alimentar o mesmo motor de conciliação.
+
+    O endpoint /v2/transactions não aceita filtro de data no servidor —
+    pagina (por cursor) em ordem decrescente de data, e para assim que
+    encontra uma transação mais antiga que `desde` (ou acaba as páginas).
+    `max_paginas` é um limite de segurança pra nunca ficar preso puxando
+    histórico enorme por engano."""
     api_key = obter_api_key()
-    params = {"accountId": account_id, "pageSize": 500}
-    if desde:
-        params["from"] = desde
+    data_limite = _date.fromisoformat(desde) if desde else None
 
-    resp = requests.get(f"{BASE_URL}/transactions", params=params, headers={"X-API-KEY": api_key})
-    if resp.status_code != 200:
-        raise RuntimeError(f"Erro ao listar transações ({resp.status_code}): {resp.text}")
+    transacoes: list[TransacaoPluggy] = []
+    url = f"{BASE_URL}/v2/transactions"
+    params = {"accountId": account_id}
 
-    return [
-        TransacaoPluggy(id=t["id"], data=t["date"][:10], descricao=t.get("description", ""), valor=t["amount"])
-        for t in resp.json().get("results", [])
-    ]
+    for _ in range(max_paginas):
+        resp = requests.get(url, params=params, headers={"X-API-KEY": api_key})
+        if resp.status_code != 200:
+            raise RuntimeError(f"Erro ao listar transações ({resp.status_code}): {resp.text}")
+        dados = resp.json()
+
+        parou = False
+        for t in dados.get("results", []):
+            data_txn = t["date"][:10]
+            if data_limite and _date.fromisoformat(data_txn) < data_limite:
+                parou = True
+                break
+            transacoes.append(
+                TransacaoPluggy(id=t["id"], data=data_txn, descricao=t.get("description", ""), valor=t["amount"])
+            )
+        if parou:
+            break
+
+        proximo = dados.get("next")
+        if not proximo:
+            break
+        url = f"{BASE_URL}{proximo}"
+        params = None  # o "next" já vem com a querystring completa
+
+    return transacoes

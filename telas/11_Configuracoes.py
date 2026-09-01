@@ -318,7 +318,8 @@ with aba_integracao_bancaria:
                                 "pode colar o link inteiro também, o sistema extrai o código sozinho:",
                                 key=f"item_id_{c['id']}",
                             )
-                            if item_id_colado.strip() and st.button("Salvar conexão", key=f"salvar_conexao_{c['id']}"):
+                            contas_pendentes_key = f"contas_pendentes_{c['id']}"
+                            if item_id_colado.strip() and st.button("Buscar contas", key=f"buscar_contas_{c['id']}"):
                                 item_id = _extrair_item_id(item_id_colado)
                                 if not item_id:
                                     st.error(
@@ -331,11 +332,38 @@ with aba_integracao_bancaria:
                                 except Exception as e:
                                     st.error(f"Não deu pra confirmar a conexão: {e}")
                                 else:
+                                    if not contas_pluggy:
+                                        st.error("Nenhuma conta encontrada dentro desse banco conectado.")
+                                    else:
+                                        st.session_state[contas_pendentes_key] = {"item_id": item_id, "contas": contas_pluggy}
+                                        st.rerun()
+
+                            pendente = st.session_state.get(contas_pendentes_key)
+                            if pendente:
+                                contas_pluggy = pendente["contas"]
+                                if len(contas_pluggy) == 1:
+                                    conta_escolhida_id = contas_pluggy[0].id
+                                    st.caption(f"Conta encontrada: {contas_pluggy[0].nome} ({contas_pluggy[0].numero})")
+                                else:
+                                    # o banco pode trazer mais de uma "conta" dentro do mesmo login
+                                    # (ex.: conta corrente + cartão de crédito) — pede pra escolher
+                                    # qual delas é a conta bancária de verdade, em vez de adivinhar.
+                                    opcoes_conta_pluggy = {
+                                        conta.id: f"{conta.nome} — {conta.tipo} ({conta.numero}) — saldo {conta.saldo}"
+                                        for conta in contas_pluggy
+                                    }
+                                    conta_escolhida_id = st.selectbox(
+                                        "Esse banco tem mais de uma conta — qual delas é essa conta bancária?",
+                                        options=list(opcoes_conta_pluggy.keys()),
+                                        format_func=lambda i: opcoes_conta_pluggy[i],
+                                        key=f"escolha_conta_pluggy_{c['id']}",
+                                    )
+                                if st.button("Salvar conexão", key=f"salvar_conexao_{c['id']}", type="primary"):
                                     client.table("integracoes_bancarias").insert(
                                         {
                                             "conta_bancaria_id": c["id"],
-                                            "pluggy_item_id": item_id,
-                                            "pluggy_account_id": contas_pluggy[0].id if len(contas_pluggy) == 1 else None,
+                                            "pluggy_item_id": pendente["item_id"],
+                                            "pluggy_account_id": conta_escolhida_id,
                                             "status": "ativo",
                                             # marca a sincronização "desde agora" já na conexão — a
                                             # primeira sincronização de verdade só traz transações a
@@ -345,6 +373,7 @@ with aba_integracao_bancaria:
                                         }
                                     ).execute()
                                     st.success("Conexão salva. A partir de agora, só as transações de hoje em diante serão trazidas.")
+                                    del st.session_state[contas_pendentes_key]
                                     del st.session_state[f"connect_token_{c['id']}"]
                                     st.rerun()
 
