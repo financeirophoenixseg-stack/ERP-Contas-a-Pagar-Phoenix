@@ -69,27 +69,6 @@ def _campo_valor(coluna, label: str, key: str, valor_inicial: float = 0.0) -> fl
     return valor
 
 
-def _pills(opcoes: list[str], key_estado: str, key_prefix: str) -> str:
-    """Linha de botões estilo 'pill' (o selecionado em azul sólido, os
-    demais neutros) — substitui um st.radio horizontal por algo mais
-    parecido com filtro de app financeiro. O estado escolhido persiste em
-    st.session_state[key_estado] entre reruns."""
-    if key_estado not in st.session_state:
-        st.session_state[key_estado] = opcoes[0]
-    cols = st.columns(len(opcoes))
-    for col, opcao in zip(cols, opcoes):
-        ativo = st.session_state[key_estado] == opcao
-        if col.button(
-            opcao,
-            key=f"pill_{key_prefix}_{opcao}",
-            type="primary" if ativo else "secondary",
-            use_container_width=True,
-        ):
-            st.session_state[key_estado] = opcao
-            st.rerun()
-    return st.session_state[key_estado]
-
-
 def _cartao_acao_ia(key: str, icone_svg: str, titulo: str, subtitulo: str) -> bool:
     """Cartão de ação estilo botão grande (ícone + título + subtítulo),
     usado pros dois atalhos de IA no topo da página. Clicar expande/recolhe
@@ -464,7 +443,7 @@ st.divider()
 col_titulo_novo, col_toggle_novo = st.columns([3, 1])
 col_titulo_novo.subheader("Novo lançamento")
 with col_toggle_novo:
-    tipo_label = _pills(["Pagar", "Receber"], "novo_lanc_tipo_estado", "novo_lanc_tipo")
+    tipo_label = layout.pills(["Pagar", "Receber"], "novo_lanc_tipo_estado", "novo_lanc_tipo")
 tipo = "pagar" if tipo_label == "Pagar" else "receber"
 
 col1, col2, col3, col4 = st.columns(4)
@@ -688,11 +667,11 @@ st.subheader("Extrato")
 
 col_ver, col_badge_topo = st.columns([3, 1])
 with col_ver:
-    tipo_extrato = _pills(["Tudo", "A Pagar", "A Receber"], "extrato_tipo_estado", "extrato_tipo")
+    tipo_extrato = layout.pills(["Tudo", "A Pagar", "A Receber"], "extrato_tipo_estado", "extrato_tipo")
 
 col_periodo, col_data_esp, col_exp1, col_exp2 = st.columns([2.5, 1.1, 0.85, 0.85])
 with col_periodo:
-    periodo = _pills(
+    periodo = layout.pills(
         ["Todos", "Atrasados", "Hoje", "Esta semana", "Este mês"], "extrato_periodo_estado", "extrato_periodo"
     )
 with col_data_esp:

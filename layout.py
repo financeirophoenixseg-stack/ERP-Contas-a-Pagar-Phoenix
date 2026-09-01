@@ -255,3 +255,25 @@ def cartoes_kpi(itens: list[dict], colunas: int | None = None) -> None:
         )
     partes.append("</div>")
     st.markdown(_compacto("".join(partes)), unsafe_allow_html=True)
+
+
+def pills(opcoes: list[str], key_estado: str, key_prefix: str) -> str:
+    """Linha de botões estilo 'pill' (o selecionado em azul sólido, os
+    demais neutros) — substitui um st.radio horizontal por algo mais
+    parecido com filtro de app financeiro (usado em Contas a Pagar e
+    Receber e em Relatórios). O estado escolhido persiste em
+    st.session_state[key_estado] entre reruns."""
+    if key_estado not in st.session_state:
+        st.session_state[key_estado] = opcoes[0]
+    cols = st.columns(len(opcoes))
+    for col, opcao in zip(cols, opcoes):
+        ativo = st.session_state[key_estado] == opcao
+        if col.button(
+            opcao,
+            key=f"pill_{key_prefix}_{opcao}",
+            type="primary" if ativo else "secondary",
+            use_container_width=True,
+        ):
+            st.session_state[key_estado] = opcao
+            st.rerun()
+    return st.session_state[key_estado]
