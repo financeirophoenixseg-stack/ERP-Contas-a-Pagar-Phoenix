@@ -1,9 +1,77 @@
+import hashlib
+import uuid
+from datetime import date, datetime, timedelta
+
 import streamlit as st
 import streamlit.components.v1 as components
+from postgrest.exceptions import APIError
 
 import layout
 import pluggy_integration
+from conciliacao import inserir_e_conciliar
 from db import get_client
+
+
+def _sincronizar_conta_pluggy(client, conta_bancaria_id: str, integracao: dict) -> dict:
+    """Puxa as transações da Pluggy pra essa conta e tenta conciliar
+    automaticamente — mesma lógica de Importar OFX, só que a fonte é a
+    API da Pluggy em vez de um arquivo .ofx. Evita duplicidade pelo id
+    da transação na Pluggy (usado como fit_id, igual o FITID do OFX)."""
+    account_id = integracao.get("pluggy_account_id")
+    if not account_id:
+        return {"erro": "Conta dentro do banco ainda não foi escolhida — desconecte e conecte de novo."}
+
+    if integracao.get("ultima_sincronizacao"):
+        dt_ultima = datetime.fromisoformat(str(integracao["ultima_sincronizacao"]).replace("Z", "+00:00"))
+        desde = (dt_ultima.date() - timedelta(days=1)).isoformat()  # 1 dia de margem, evita perder transação de borda
+    else:
+        desde = (date.today() - timedelta(days=90)).isoformat()  # primeira sincronização: últimos 90 dias
+
+    transacoes = pluggy_integration.listar_transacoes(account_id, desde=desde)
+
+    hoje = date.today()
+    hash_unico = hashlib.sha256(f"{account_id}-{hoje.isoformat()}-{uuid.uuid4().hex}".encode()).hexdigest()
+    importacao = (
+        client.table("ofx_importacoes")
+        .insert(
+            {
+                "conta_bancaria_id": conta_bancaria_id,
+                "arquivo_nome": f"Sincronização Pluggy — {hoje.isoformat()}",
+                "hash_arquivo": hash_unico,
+            }
+        )
+        .execute()
+    )
+    importacao_id = importacao.data[0]["id"]
+
+    regras = client.table("regras_identificacao").select("*").execute().data or []
+    inseridas = duplicadas = conciliadas = 0
+    for t in transacoes:
+        try:
+            conciliou = inserir_e_conciliar(
+                client,
+                ofx_importacao_id=importacao_id,
+                conta_id=conta_bancaria_id,
+                fit_id=t.id,
+                data=t.data,
+                valor=t.valor,
+                descricao=t.descricao,
+                regras_identificacao=regras,
+            )
+            inseridas += 1
+            if conciliou:
+                conciliadas += 1
+        except APIError as e:
+            if e.code == "23505":  # unique_violation: (conta_bancaria_id, fit_id) já existe
+                duplicadas += 1
+            else:
+                raise
+
+    client.table("integracoes_bancarias").update(
+        {"ultima_sincronizacao": datetime.now().isoformat(), "status": "ativo"}
+    ).eq("id", integracao["id"]).execute()
+
+    return {"inseridas": inseridas, "duplicadas": duplicadas, "conciliadas": conciliadas}
 
 st.set_page_config(page_title="Configurações", layout="wide")
 layout.aplicar_logo()
@@ -146,9 +214,9 @@ with aba_integracao_bancaria:
         )
     else:
         st.warning(
-            "⚠️ A conexão em si (o widget de escolher o banco e fazer login) ainda não foi testada contra uma "
-            "conta real da Pluggy — o botão abaixo já gera o token certo, mas o encaixe final "
-            "(salvar a conexão depois que você loga no banco) precisa ser conferido na primeira vez que usar."
+            "⚠️ Nem a conexão (widget de escolher o banco e fazer login) nem a sincronização (puxar as "
+            "transações) foram testadas contra uma conta real da Pluggy ainda — a lógica está pronta, mas o "
+            "primeiro uso de verdade precisa ser conferido com cuidado."
         )
         contas_bancarias_todas = (
             client.table("contas_bancarias")
@@ -172,7 +240,26 @@ with aba_integracao_bancaria:
                     if integracao:
                         st.write(f"**Status:** {integracao['status']}")
                         st.write(f"**Última sincronização:** {integracao['ultima_sincronizacao'] or 'nunca'}")
-                        if st.button("Desconectar", key=f"desconectar_{c['id']}"):
+                        col_sync, col_desc = st.columns(2)
+                        if col_sync.button("🔄 Sincronizar agora", key=f"sincronizar_{c['id']}", type="primary"):
+                            with st.spinner("Buscando transações na Pluggy..."):
+                                try:
+                                    resultado = _sincronizar_conta_pluggy(client, c["id"], integracao)
+                                except Exception as e:
+                                    st.error(f"Erro ao sincronizar: {e}")
+                                else:
+                                    if "erro" in resultado:
+                                        st.error(resultado["erro"])
+                                    else:
+                                        msg = (
+                                            f"{resultado['inseridas']} nova(s) transação(ões), "
+                                            f"{resultado['duplicadas']} já existia(m)."
+                                        )
+                                        if resultado["conciliadas"]:
+                                            msg += f" {resultado['conciliadas']} conciliada(s) automaticamente."
+                                        st.success(msg)
+                                        st.rerun()
+                        if col_desc.button("Desconectar", key=f"desconectar_{c['id']}"):
                             client.table("integracoes_bancarias").delete().eq("id", integracao["id"]).execute()
                             st.success("Desconectado.")
                             st.rerun()

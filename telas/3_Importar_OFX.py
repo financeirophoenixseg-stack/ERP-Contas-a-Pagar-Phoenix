@@ -5,10 +5,10 @@ import streamlit as st
 from postgrest.exceptions import APIError
 
 import layout
+from conciliacao import inserir_e_conciliar
 from db import get_client
 from formatacao import data_br, moeda
 from ofx_parser import decode_ofx_bytes, parse_ofx
-from regras_identificacao import sugerir
 
 st.set_page_config(page_title="Importar OFX", layout="wide")
 layout.aplicar_logo()
@@ -185,110 +185,19 @@ if st.button("Confirmar importação", type="primary"):
 
     for linha in linhas:
         try:
-            txn = (
-                client.table("ofx_transacoes")
-                .insert(
-                    {
-                        "ofx_importacao_id": importacao_ids[linha["_conta_id"]],
-                        "conta_bancaria_id": linha["_conta_id"],
-                        "fit_id": linha["_fit_id"] or None,
-                        "data": linha["Data"],
-                        "valor": linha["Valor"],
-                        "descricao": linha["Descrição"],
-                    }
-                )
-                .execute()
+            conciliou = inserir_e_conciliar(
+                client,
+                ofx_importacao_id=importacao_ids[linha["_conta_id"]],
+                conta_id=linha["_conta_id"],
+                fit_id=linha["_fit_id"],
+                data=linha["Data"],
+                valor=linha["Valor"],
+                descricao=linha["Descrição"],
+                regras_identificacao=regras_identificacao,
             )
             inseridas += 1
-
-            # Tenta conciliar com algum lote de comissao ainda pendente da
-            # mesma empresa, mesma data e mesmo valor liquido.
-            conta = client.table("contas_bancarias").select("empresa_id").eq("id", linha["_conta_id"]).execute().data[0]
-            candidatos = (
-                client.table("lotes_comissao")
-                .select("id, valor_liquido")
-                .eq("empresa_id", conta["empresa_id"])
-                .eq("data_pagamento", linha["Data"])
-                .eq("status", "pendente")
-                .execute()
-                .data
-                or []
-            )
-            match = next((c for c in candidatos if abs(c["valor_liquido"] - linha["Valor"]) < 0.005), None)
-            txn_id = txn.data[0]["id"]
-            if match:
-                client.table("lotes_comissao").update(
-                    {"status": "conciliado", "ofx_transacao_id": txn_id}
-                ).eq("id", match["id"]).execute()
-                client.table("ofx_transacoes").update({"conciliado": True}).eq("id", txn_id).execute()
+            if conciliou:
                 conciliadas += 1
-            else:
-                # Tenta conciliar com uma conta a pagar/receber prevista
-                # (mesma empresa, mesmo tipo pela direção do valor, mesmo
-                # valor). Aceita alguns dias de diferença na data, já que o
-                # crédito/débito pode cair antes/depois do vencimento previsto.
-                tipo_esperado = "receber" if linha["Valor"] > 0 else "pagar"
-                previstos = (
-                    client.table("lancamentos_previstos")
-                    .select("id, valor")
-                    .eq("empresa_id", conta["empresa_id"])
-                    .eq("tipo", tipo_esperado)
-                    .eq("status", "previsto")
-                    .execute()
-                    .data
-                    or []
-                )
-                match_previsto = next(
-                    (p for p in previstos if abs(p["valor"] - abs(linha["Valor"])) < 0.005), None
-                )
-                if match_previsto:
-                    client.table("lancamentos_previstos").update(
-                        {"status": "pago", "data_pagamento": linha["Data"], "ofx_transacao_id": txn_id}
-                    ).eq("id", match_previsto["id"]).execute()
-                    client.table("ofx_transacoes").update({"conciliado": True}).eq("id", txn_id).execute()
-                    conciliadas += 1
-                else:
-                    # Última tentativa: despesa/receita fixa cujo valor varia
-                    # (ex.: conta de luz) — reconhece o fornecedor/cliente pela
-                    # descrição já ensinada (Classificar Lançamentos) e casa
-                    # com uma previsão do MESMO MÊS, mesmo que o valor seja
-                    # diferente do provisionado. Atualiza o valor (e o das
-                    # próximas ocorrências da mesma recorrência) pelo real.
-                    regra_desc = sugerir(regras_identificacao, linha["Descrição"])
-                    if regra_desc and (regra_desc.get("fornecedor_id") or regra_desc.get("cliente_id")):
-                        mes_txn = linha["Data"][:7]
-                        query = (
-                            client.table("lancamentos_previstos")
-                            .select("id, grupo_id, valor, data_vencimento")
-                            .eq("empresa_id", conta["empresa_id"])
-                            .eq("tipo", tipo_esperado)
-                            .eq("status", "previsto")
-                        )
-                        if regra_desc.get("fornecedor_id"):
-                            query = query.eq("fornecedor_id", regra_desc["fornecedor_id"])
-                        else:
-                            query = query.eq("cliente_id", regra_desc["cliente_id"])
-                        candidatos_fixa = query.execute().data or []
-                        candidatos_mes = [c for c in candidatos_fixa if (c["data_vencimento"] or "")[:7] == mes_txn]
-                        if len(candidatos_mes) == 1:
-                            escolhido = candidatos_mes[0]
-                            valor_real = abs(linha["Valor"])
-                            client.table("lancamentos_previstos").update(
-                                {
-                                    "status": "pago",
-                                    "data_pagamento": linha["Data"],
-                                    "ofx_transacao_id": txn_id,
-                                    "valor": valor_real,
-                                }
-                            ).eq("id", escolhido["id"]).execute()
-                            if escolhido.get("grupo_id"):
-                                # propaga o valor real para as proximas ocorrencias
-                                # ja provisionadas da mesma recorrencia (ex.: conta fixa).
-                                client.table("lancamentos_previstos").update({"valor": valor_real}).eq(
-                                    "grupo_id", escolhido["grupo_id"]
-                                ).eq("status", "previsto").execute()
-                            client.table("ofx_transacoes").update({"conciliado": True}).eq("id", txn_id).execute()
-                            conciliadas += 1
         except APIError as e:
             if e.code == "23505":  # unique_violation: (conta_bancaria_id, fit_id) já existe
                 duplicadas += 1
